@@ -1,6 +1,7 @@
-// High-craft 2.5D Retro RPG Workshop canvas: continuous tilemap backdrop, flickering hearth,
-// smooth-walking artisans (bench <-> lounge rug), spinning mini-machines, runaway orphan alerts,
-// pixel speech bubbles, flying wax-sealed envelopes, and corner archive chest.
+// Crisp, airy studio-workshop pixel-art canvas (Lobby-inspired layout & polish).
+// Pure white/host canvas, floating room title pills straddling the top wall, side-by-side rooms,
+// tight oak workbenches with animated screens, process gear pods, smooth-walking artisans,
+// crisp pixel bubbles, and flying wax-sealed envelopes.
 import type { PluginTheme } from "@getpaseo/plugin";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Pressable, ScrollView, Text, View } from "react-native";
@@ -11,8 +12,8 @@ import {
   ARCHIVE_CHEST,
   artisanColors,
   artisanFrames,
+  benchSprite,
   ENVELOPE_SPRITE,
-  HEARTH_FIRE_FRAMES,
   machineFrames,
   WORKBENCH_SPRITE,
   workshopPalette,
@@ -33,7 +34,6 @@ export interface WorkshopCanvasProps {
   scale: number;
 }
 
-/** Smoothly moves an artisan sprite between its bench and the lounge rug when state changes. */
 const WalkingArtisan = memo(function WalkingArtisan({
   item,
   palette,
@@ -54,7 +54,7 @@ const WalkingArtisan = memo(function WalkingArtisan({
   frame: number;
   selected: boolean;
   bubbleText: string | null;
-  bubbleTone: "normal" | "warn" | "danger";
+  bubbleTone: "tool" | "warn" | "danger";
   onPress: () => void;
 }) {
   const pos = useRef(new Animated.ValueXY({ x: targetX, y: targetY })).current;
@@ -74,7 +74,7 @@ const WalkingArtisan = memo(function WalkingArtisan({
     }
 
     setWalking(true);
-    const duration = Math.min(1400, Math.max(380, Math.round(dist * 7)));
+    const duration = Math.min(1300, Math.max(360, Math.round(dist * 7)));
     const anim = Animated.timing(pos, {
       toValue: { x: targetX, y: targetY },
       duration,
@@ -98,13 +98,10 @@ const WalkingArtisan = memo(function WalkingArtisan({
 
   const bubbleBg =
     bubbleTone === "danger"
-      ? "#dc2626"
+      ? "#b91c1c"
       : bubbleTone === "warn"
-        ? "#d97706"
-        : palette.isDark
-          ? "#fbf3df"
-          : "#fffcf2";
-  const bubbleFg = bubbleTone === "normal" ? "#241914" : "#ffffff";
+        ? "#92400e"
+        : "#272c33";
 
   return (
     <Animated.View
@@ -112,7 +109,7 @@ const WalkingArtisan = memo(function WalkingArtisan({
         position: "absolute",
         left: 0,
         top: 0,
-        zIndex: Math.round(targetY) + (selected ? 500 : 100),
+        zIndex: Math.round(targetY) + (selected ? 600 : 120),
         transform: [{ translateX: pos.x }, { translateY: pos.y }],
       }}
     >
@@ -122,12 +119,12 @@ const WalkingArtisan = memo(function WalkingArtisan({
         accessibilityLabel={`${item.title}, ${STATE_LABEL[item.state]}`}
         style={{ alignItems: "center" }}
       >
-        {/* Crisp pixel-framed speech / tool bubble */}
+        {/* Crisp Lobby-style dark pixel speech/tool bubble */}
         {bubbleText ? (
           <View
             style={{
               position: "absolute",
-              bottom: h + 3,
+              bottom: h + 2,
               alignItems: "center",
               zIndex: 999,
             }}
@@ -136,17 +133,17 @@ const WalkingArtisan = memo(function WalkingArtisan({
               style={{
                 paddingHorizontal: 5,
                 paddingVertical: 1.5,
-                borderRadius: 3,
+                borderRadius: 2,
                 borderWidth: 1,
-                borderColor: "#17110e",
+                borderColor: "#14161a",
                 backgroundColor: bubbleBg,
-                maxWidth: Math.max(76, w * 2.6),
+                maxWidth: Math.max(72, w * 2.5),
               }}
             >
               <Text
                 numberOfLines={1}
                 style={{
-                  color: bubbleFg,
+                  color: "#ffffff",
                   fontSize: 9,
                   fontWeight: "700",
                   letterSpacing: 0.2,
@@ -155,7 +152,6 @@ const WalkingArtisan = memo(function WalkingArtisan({
                 {bubbleText}
               </Text>
             </View>
-            {/* Tiny pixel bubble tail */}
             <View
               style={{
                 width: 4,
@@ -164,14 +160,14 @@ const WalkingArtisan = memo(function WalkingArtisan({
                 borderLeftWidth: 1,
                 borderRightWidth: 1,
                 borderBottomWidth: 1,
-                borderColor: "#17110e",
+                borderColor: "#14161a",
                 marginTop: -1,
               }}
             />
           </View>
         ) : null}
 
-        {/* Subtle golden RPG selection ring beneath feet */}
+        {/* Subtle crisp selection halo beneath feet */}
         {selected ? (
           <View
             style={{
@@ -182,7 +178,7 @@ const WalkingArtisan = memo(function WalkingArtisan({
               borderRadius: 999,
               borderWidth: 2,
               borderColor: palette.selectedRing,
-              backgroundColor: "rgba(245, 196, 81, 0.22)",
+              backgroundColor: "rgba(59, 130, 246, 0.16)",
             }}
           />
         ) : null}
@@ -193,39 +189,11 @@ const WalkingArtisan = memo(function WalkingArtisan({
           paletteKey={charPalette.key}
           scale={scale}
         />
-
-        {/* Compact floating nameplate beneath feet */}
-        <View
-          style={{
-            marginTop: 1,
-            paddingHorizontal: 4,
-            paddingVertical: 0.5,
-            borderRadius: 3,
-            backgroundColor: selected
-              ? palette.selectedRing
-              : palette.isDark
-                ? "rgba(22, 18, 15, 0.78)"
-                : "rgba(255, 252, 242, 0.86)",
-            maxWidth: Math.max(66, scale * 28),
-          }}
-        >
-          <Text
-            numberOfLines={1}
-            style={{
-              color: selected ? "#17110e" : palette.roomHeaderText,
-              fontSize: 9,
-              fontWeight: "700",
-            }}
-          >
-            {item.title}
-          </Text>
-        </View>
       </Pressable>
     </Animated.View>
   );
 });
 
-/** Smoothly glides a wax-sealed pixel envelope from sender to recipient across the room. */
 const FlyingEnvelope = memo(function FlyingEnvelope({
   from,
   to,
@@ -274,6 +242,7 @@ const FlyingEnvelope = memo(function FlyingEnvelope({
 
 const WorkshopRoomView = memo(function WorkshopRoomView({
   room,
+  theme,
   palette,
   scale,
   frame,
@@ -285,6 +254,7 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
   onSelectArchive,
 }: {
   room: WorkshopRoom;
+  theme: PluginTheme;
   palette: WorkshopPalette;
   scale: number;
   frame: number;
@@ -302,7 +272,6 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
   );
   const backdrop = useMemo(() => buildWorkshopBackdrop(geom), [geom]);
 
-  // Compute exact pixel coordinates for every bench & character so envelopes can glide between them.
   const coordsByAgent = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
     let loungeIdx = 0;
@@ -313,8 +282,8 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
         const spot = geom.loungeSpot(loungeIdx++);
         map.set(item.id, { x: spot.x * scale, y: spot.y * scale });
       } else {
-        // Stand right behind the workbench
-        map.set(item.id, { x: (origin.x + 5) * scale, y: (origin.y - 2) * scale });
+        // Seated / standing right in front of the workbench monitor
+        map.set(item.id, { x: (origin.x + 7) * scale, y: (origin.y + 11) * scale });
       }
     });
     return map;
@@ -327,67 +296,72 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
   const roomPxW = geom.width * scale;
   const roomPxH = geom.height * scale;
 
+  const dotColor =
+    room.runaways.length > 0
+      ? theme.colors.statusDanger
+      : room.benches.some((b) => b.state === "needs-input")
+        ? theme.colors.statusWarning
+        : room.benches.some((b) => b.state === "working")
+          ? theme.colors.statusSuccess
+          : theme.colors.foregroundMuted;
+
   return (
-    <View
-      style={{
-        alignSelf: "flex-start",
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: room.runaways.length > 0 ? "#ef4444" : palette.roomFrame,
-        backgroundColor: palette.roomHeaderBg,
-        overflow: "hidden",
-      }}
-    >
-      {/* Quiet wooden room title bar */}
+    <View style={{ paddingTop: 11, position: "relative" }}>
+      {/* Floating Lobby-style white pill room title straddling the top wall */}
       <View
         style={{
+          position: "absolute",
+          top: 0,
+          left: Math.round(14 * scale),
+          zIndex: 1500,
           flexDirection: "row",
           alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          paddingHorizontal: 10,
-          paddingVertical: 5,
-          backgroundColor: palette.roomHeaderBg,
-          borderBottomWidth: 1,
-          borderBottomColor: palette.roomFrame,
-          width: roomPxW,
+          gap: 5,
+          paddingHorizontal: 8,
+          paddingVertical: 2.5,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: room.runaways.length > 0 ? theme.colors.statusDanger : palette.pillBorder,
+          backgroundColor: palette.pillBg,
+          maxWidth: Math.max(140, roomPxW - 24),
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+        <View
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: 999,
+            backgroundColor: dotColor,
+          }}
+        />
+        <Text
+          numberOfLines={1}
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 11,
+            fontWeight: "600",
+            flexShrink: 1,
+          }}
+        >
+          {room.name}
+        </Text>
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10 }}>
+          {stations.length}
+        </Text>
+        {room.totalProcesses > 0 ? (
           <Text
-            numberOfLines={1}
             style={{
-              color: palette.roomHeaderText,
-              fontSize: 11,
-              fontWeight: "700",
-              flexShrink: 1,
+              color: room.runaways.length > 0 ? theme.colors.statusDanger : theme.colors.foregroundMuted,
+              fontSize: 10,
+              fontWeight: room.runaways.length > 0 ? "700" : "400",
             }}
           >
-            {room.name}
+            · {room.totalProcesses}p · {formatMemory(room.totalRssKb)}
           </Text>
-          {room.runaways.length > 0 ? (
-            <View
-              style={{
-                paddingHorizontal: 5,
-                paddingVertical: 1,
-                borderRadius: 3,
-                backgroundColor: "#dc2626",
-              }}
-            >
-              <Text style={{ color: "#ffffff", fontSize: 9, fontWeight: "700" }}>
-                {room.runaways.length} 失控
-              </Text>
-            </View>
-          ) : null}
-        </View>
-        <Text style={{ color: palette.roomHeaderMuted, fontSize: 10 }}>
-          {room.totalProcesses > 0
-            ? `${room.totalProcesses}p · ${formatCpu(room.totalCpu)} · ${formatMemory(room.totalRssKb)}`
-            : `${room.benches.length} 工匠`}
-        </Text>
+        ) : null}
       </View>
 
-      {/* Continuous 2.5D pixel-art room scene */}
+      {/* Crisp 2.5D studio room */}
       <View style={{ width: roomPxW, height: roomPxH, position: "relative" }}>
         <PixelSprite
           bitmap={backdrop}
@@ -397,62 +371,43 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
           style={{ position: "absolute", left: 0, top: 0 }}
         />
 
-        {/* Animated flickering fireplace hearth */}
-        <View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            left: geom.hearthPos.x * scale,
-            top: geom.hearthPos.y * scale,
-            zIndex: 5,
-          }}
-        >
-          <PixelSprite
-            bitmap={HEARTH_FIRE_FRAMES[frame % HEARTH_FIRE_FRAMES.length]!}
-            colors={palette.colors}
-            paletteKey={palette.key}
-            scale={scale}
-          />
-        </View>
-
-        {/* Workbenches + Mini-Machine contraptions + Artisans */}
         {stations.map((item, idx) => {
           const origin = geom.stationOrigin(idx);
           const benchLeft = origin.x * scale;
-          const benchTop = (origin.y + 12) * scale;
-          const machineLeft = (origin.x + 25) * scale;
-          const machineTop = (origin.y + 12) * scale;
+          const benchTop = origin.y * scale;
+          const podLeft = (origin.x + 28) * scale;
+          const podTop = (origin.y + 4) * scale;
           const isRunaway = item.state === "runaway";
           const selected = selectedId === item.id;
           const machineSprite =
             item.machineLoad !== "none" ? machineFrames(item.machineLoad)[frame % 2]! : null;
           const charTarget = coordsByAgent.get(item.id) ?? {
-            x: (origin.x + 5) * scale,
-            y: (origin.y - 2) * scale,
+            x: (origin.x + 7) * scale,
+            y: (origin.y + 11) * scale,
           };
 
           const toolWord = toolByAgent.get(item.id);
           const bubbleText = isRunaway
-            ? `失控 · ${item.processCount}p`
+            ? `Runaway ${item.processCount}p`
             : item.state === "needs-input"
-              ? "需审批!"
+              ? "Approve?"
               : item.state === "failed"
-                ? "出错!"
+                ? "Error"
                 : toolWord
                   ? toolWord
                   : item.machineLoad === "hot"
-                    ? `${formatCpu(item.cpu)} 过热`
+                    ? `${formatCpu(item.cpu)}`
                     : null;
-          const bubbleTone: "normal" | "warn" | "danger" =
+          const bubbleTone: "tool" | "warn" | "danger" =
             isRunaway || item.state === "failed"
               ? "danger"
               : item.state === "needs-input" || item.machineLoad === "hot"
                 ? "warn"
-                : "normal";
+                : "tool";
 
           return (
             <View key={item.id} style={{ position: "absolute", left: 0, top: 0 }}>
-              {/* Wooden Workbench */}
+              {/* Oak Studio Workbench with live/off/error monitor */}
               <Pressable
                 onPress={() => onSelect(item.id)}
                 accessibilityRole="button"
@@ -465,14 +420,14 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
                 }}
               >
                 <PixelSprite
-                  bitmap={WORKBENCH_SPRITE}
+                  bitmap={benchSprite(item.state, frame)}
                   colors={palette.colors}
                   paletteKey={palette.key}
                   scale={scale}
                 />
               </Pressable>
 
-              {/* Spinning Mini-Machine contraption beside the workbench */}
+              {/* Compact Process Gear Pod beside the workbench */}
               {machineSprite ? (
                 <Pressable
                   onPress={() => onSelect(item.id)}
@@ -480,9 +435,9 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
                   accessibilityLabel={`${item.title} processes: ${item.processCount}`}
                   style={{
                     position: "absolute",
-                    left: machineLeft,
-                    top: machineTop,
-                    zIndex: Math.round(machineTop) + 25,
+                    left: podLeft,
+                    top: podTop,
+                    zIndex: Math.round(podTop) + 25,
                     alignItems: "center",
                   }}
                 >
@@ -493,10 +448,10 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
                         bottom: machineSprite.height * scale + 2,
                         paddingHorizontal: 5,
                         paddingVertical: 1,
-                        borderRadius: 3,
+                        borderRadius: 2,
                         borderWidth: 1,
-                        borderColor: "#17110e",
-                        backgroundColor: "#dc2626",
+                        borderColor: "#14161a",
+                        backgroundColor: "#b91c1c",
                         zIndex: 999,
                       }}
                     >
@@ -510,13 +465,13 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
                     <View
                       style={{
                         position: "absolute",
-                        bottom: -2,
+                        bottom: -1,
                         width: machineSprite.width * scale + 6,
-                        height: Math.max(8, scale * 3.5),
+                        height: Math.max(7, scale * 3),
                         borderRadius: 999,
                         borderWidth: 2,
-                        borderColor: palette.selectedRing,
-                        backgroundColor: "rgba(239, 68, 68, 0.25)",
+                        borderColor: theme.colors.statusDanger,
+                        backgroundColor: "rgba(239, 68, 68, 0.2)",
                       }}
                     />
                   ) : null}
@@ -527,20 +482,10 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
                     paletteKey={palette.key}
                     scale={scale}
                   />
-                  <Text
-                    style={{
-                      color: isRunaway || item.machineLoad === "hot" ? "#f87171" : palette.roomHeaderMuted,
-                      fontSize: 8,
-                      fontWeight: "700",
-                      marginTop: -1,
-                    }}
-                  >
-                    {item.processCount}p·{formatMemory(item.rssKb)}
-                  </Text>
                 </Pressable>
               ) : null}
 
-              {/* Live Artisan character (walks between bench and lounge rug) */}
+              {/* Smooth-walking Artisan */}
               {!isRunaway ? (
                 <WalkingArtisan
                   item={item}
@@ -559,7 +504,7 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
           );
         })}
 
-        {/* Corner Archive Treasure Chest */}
+        {/* Corner Filing Cabinet with crisp count badge */}
         {room.archived.length > 0 ? (
           <Pressable
             onPress={() => onSelectArchive(room)}
@@ -577,15 +522,15 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
               style={{
                 paddingHorizontal: 4,
                 paddingVertical: 0.5,
-                borderRadius: 3,
+                borderRadius: 2,
                 borderWidth: 1,
-                borderColor: "#17110e",
-                backgroundColor: palette.roomHeaderBg,
+                borderColor: "#1f242b",
+                backgroundColor: palette.pillBg,
                 marginBottom: 1,
               }}
             >
-              <Text style={{ color: palette.roomHeaderText, fontSize: 8, fontWeight: "700" }}>
-                ×{room.archived.length}
+              <Text style={{ color: theme.colors.foreground, fontSize: 8, fontWeight: "700" }}>
+                {room.archived.length}
               </Text>
             </View>
             <PixelSprite
@@ -597,7 +542,7 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
           </Pressable>
         ) : null}
 
-        {/* Flying Wax-Sealed Envelopes between agents */}
+        {/* Flying Wax-Sealed Envelopes */}
         {roomEnvelopes.map((env) => {
           const from = coordsByAgent.get(env.fromId)!;
           const to = coordsByAgent.get(env.toId)!;
@@ -622,9 +567,8 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
   const palette = useMemo(() => workshopPalette(theme), [theme]);
   const [frame, setFrame] = useState(0);
 
-  // Smooth 260ms animation tick for 4-frame hammering, walking, fire flickering, and gears.
   useEffect(() => {
-    const timer = setInterval(() => setFrame((f) => (f + 1) % 4), 260);
+    const timer = setInterval(() => setFrame((f) => (f + 1) % 4), 280);
     return () => clearInterval(timer);
   }, []);
 
@@ -635,7 +579,7 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
           flex: 1,
           alignItems: "center",
           justifyContent: "center",
-          padding: 24,
+          padding: 28,
           gap: 10,
           backgroundColor: palette.canvasBg,
         }}
@@ -644,13 +588,13 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
           bitmap={WORKBENCH_SPRITE}
           colors={palette.colors}
           paletteKey={palette.key}
-          scale={3}
+          scale={2.5}
         />
         <Text style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: "600" }}>
-          工坊目前空无一人
+          暂无活跃 Agent 或进程
         </Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, textAlign: "center" }}>
-          启动任意 Agent 后，像素工匠与运转中的子进程机械将出现在工坊里。
+          启动任意 Agent 后，工作台与子进程机械会出现在这里。
         </Text>
       </View>
     );
@@ -663,28 +607,33 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
       style={{ flex: 1, backgroundColor: palette.canvasBg }}
       contentContainerStyle={{
         padding: compact ? 8 : 14,
-        gap: compact ? 10 : 14,
       }}
     >
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={{ gap: compact ? 10 : 14 }}>
-          {rooms.map((room) => (
-            <WorkshopRoomView
-              key={room.workspaceId || "unassigned"}
-              room={room}
-              palette={palette}
-              scale={scale}
-              frame={frame}
-              maxCols={maxCols}
-              selectedId={selectedId}
-              toolByAgent={toolByAgent}
-              envelopes={envelopes}
-              onSelect={onSelect}
-              onSelectArchive={onSelectArchive}
-            />
-          ))}
-        </View>
-      </ScrollView>
+      <View
+        style={{
+          flexDirection: "row",
+          flexWrap: "wrap",
+          alignItems: "flex-start",
+          gap: compact ? 10 : 12,
+        }}
+      >
+        {rooms.map((room) => (
+          <WorkshopRoomView
+            key={room.workspaceId || "unassigned"}
+            room={room}
+            theme={theme}
+            palette={palette}
+            scale={scale}
+            frame={frame}
+            maxCols={maxCols}
+            selectedId={selectedId}
+            toolByAgent={toolByAgent}
+            envelopes={envelopes}
+            onSelect={onSelect}
+            onSelectArchive={onSelectArchive}
+          />
+        ))}
+      </View>
     </ScrollView>
   );
 });

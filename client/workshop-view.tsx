@@ -1,5 +1,4 @@
-// Sleek Paseo-native Agent Workshop surface: compact Lucide icon toolbar
-// + 2.5D Retro RPG Workshop Canvas / Unified List + Dual-Tab Inspector Dock.
+// Clean, airy, Lobby-inspired header & layout on a pure white/host background.
 import type { PluginTheme } from "@getpaseo/plugin";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
@@ -17,10 +16,11 @@ import {
 import { formatCpu, formatMemory } from "../shared/format";
 import { useDirectory } from "./use-directory";
 import { useWorkshopFeed } from "./use-feed";
+import { type WorkshopState } from "./workshop-art";
 import { WorkshopCanvas } from "./workshop-canvas";
 import { WorkshopDock } from "./workshop-dock";
 import { WorkshopList } from "./workshop-list";
-import { buildWorkshopRooms, type WorkshopRoom } from "./workshop-model";
+import { buildWorkshopRooms, STATE_ORDER, type WorkshopRoom } from "./workshop-model";
 
 export interface WorkshopViewProps {
   theme: PluginTheme;
@@ -28,6 +28,16 @@ export interface WorkshopViewProps {
   initialWorkspaceId?: string | null;
   openAgent?: (agentId: string) => void;
 }
+
+const FILTER_LABEL: Record<WorkshopState, string> = {
+  "needs-input": "Needs you",
+  runaway: "Runaway",
+  failed: "Failed",
+  working: "Working",
+  ready: "Ready",
+  idle: "Idle",
+  closed: "Closed",
+};
 
 export function WorkshopView({
   theme,
@@ -47,8 +57,8 @@ export function WorkshopView({
   const [scopeAll, setScopeAll] = useState(initialWorkspaceId === null);
   const [viewMode, setViewMode] = useState<"workshop" | "list">("workshop");
   const [query, setQuery] = useState("");
-  const [showClosed, setShowClosed] = useState(false);
-  const [scale, setScale] = useState(compact ? 2 : 2.5);
+  const [stateFilter, setStateFilter] = useState<WorkshopState | "all">("all");
+  const [scale, setScale] = useState(compact ? 1.8 : 2.2);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [archiveRoomId, setArchiveRoomId] = useState<string | null>(null);
 
@@ -70,7 +80,7 @@ export function WorkshopView({
     },
   });
 
-  const { rooms, allItems } = useMemo(
+  const baseData = useMemo(
     () =>
       buildWorkshopRooms({
         agents: directory.agents,
@@ -78,25 +88,70 @@ export function WorkshopView({
         processTrees: procQuery.data?.agents ?? [],
         scopeWorkspaceId: activeScopeId,
         query,
-        showClosed,
+        showClosed: stateFilter === "closed",
       }),
-    [directory.agents, directory.workspaces, procQuery.data?.agents, activeScopeId, query, showClosed],
+    [directory.agents, directory.workspaces, procQuery.data?.agents, activeScopeId, query, stateFilter],
   );
 
+  // Count per state for the clean dot filter chips
+  const counts = useMemo(() => {
+    const map: Record<WorkshopState, number> = {
+      "needs-input": 0,
+      runaway: 0,
+      failed: 0,
+      working: 0,
+      ready: 0,
+      idle: 0,
+      closed: 0,
+    };
+    for (const item of baseData.allItems) map[item.state] += 1;
+    return map;
+  }, [baseData.allItems]);
+
+  const { rooms, allItems } = useMemo(() => {
+    if (stateFilter === "all") return baseData;
+    const filteredItems = baseData.allItems.filter((i) => i.state === stateFilter);
+    const allowed = new Set(filteredItems.map((i) => i.id));
+    const filteredRooms = baseData.rooms
+      .map((r) => ({
+        ...r,
+        benches: r.benches.filter((b) => allowed.has(b.id)),
+        runaways: r.runaways.filter((b) => allowed.has(b.id)),
+        archived: r.archived.filter((b) => allowed.has(b.id)),
+      }))
+      .filter((r) => r.benches.length > 0 || r.runaways.length > 0 || r.archived.length > 0);
+    return { rooms: filteredRooms, allItems: filteredItems };
+  }, [baseData, stateFilter]);
+
   const selected = useMemo(
-    () => (selectedId ? allItems.find((i) => i.id === selectedId) ?? null : null),
-    [allItems, selectedId],
+    () => (selectedId ? baseData.allItems.find((i) => i.id === selectedId) ?? null : null),
+    [baseData.allItems, selectedId],
   );
 
   const archiveRoom: WorkshopRoom | null = useMemo(
-    () => (archiveRoomId !== null ? rooms.find((r) => r.workspaceId === archiveRoomId) ?? null : null),
-    [rooms, archiveRoomId],
+    () => (archiveRoomId !== null ? baseData.rooms.find((r) => r.workspaceId === archiveRoomId) ?? null : null),
+    [baseData.rooms, archiveRoomId],
   );
 
-  const totalCpu = rooms.reduce((sum, r) => sum + r.totalCpu, 0);
-  const totalRss = rooms.reduce((sum, r) => sum + r.totalRssKb, 0);
-  const totalProcs = rooms.reduce((sum, r) => sum + r.totalProcesses, 0);
+  const totalCpu = baseData.rooms.reduce((sum, r) => sum + r.totalCpu, 0);
+  const totalRss = baseData.rooms.reduce((sum, r) => sum + r.totalRssKb, 0);
+  const totalProcs = baseData.rooms.reduce((sum, r) => sum + r.totalProcesses, 0);
   const autoSweepEnabled = procQuery.data?.autoSweepEnabled ?? true;
+
+  const dotColorFor = (s: WorkshopState) => {
+    switch (s) {
+      case "needs-input":
+        return theme.colors.statusWarning;
+      case "runaway":
+      case "failed":
+        return theme.colors.statusDanger;
+      case "working":
+      case "ready":
+        return theme.colors.statusSuccess;
+      default:
+        return theme.colors.foregroundMuted;
+    }
+  };
 
   const handleStopProcess = async (row: ProcessRowView) => {
     await runStopProcess({ pid: row.pid, started: row.started });
@@ -113,142 +168,97 @@ export function WorkshopView({
     openAgent?.(res.agentId);
   };
 
-  const iconBtnStyle = (active = false) => ({
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: active ? theme.colors.accent : theme.colors.border,
-    backgroundColor: active ? theme.colors.surface2 : theme.colors.surface0,
-  });
+  const summaryParts = [`${baseData.allItems.length} agents`];
+  if (counts.runaway > 0) summaryParts.push(`${counts.runaway} runaway`);
+  else if (counts["needs-input"] > 0) summaryParts.push(`${counts["needs-input"]} need you`);
+  if (totalProcs > 0) summaryParts.push(`${totalProcs}p · ${formatCpu(totalCpu)} · ${formatMemory(totalRss)}`);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
-      {/* Sleek Paseo-native toolbar */}
+      {/* Airy Lobby-style pure white/surface0 header */}
       <View
         style={{
-          paddingHorizontal: compact ? 8 : 12,
-          paddingVertical: 7,
-          gap: 6,
-          borderBottomWidth: 1,
-          borderBottomColor: theme.colors.border,
-          backgroundColor: theme.colors.surface1,
+          paddingHorizontal: compact ? 10 : 14,
+          paddingTop: 10,
+          paddingBottom: 8,
+          gap: 8,
+          backgroundColor: theme.colors.surface0,
         }}
       >
+        {/* Row 1: Summary on left, Workshop/List segmented pills + Refresh on right */}
         <View
           style={{
             flexDirection: "row",
-            flexWrap: "wrap",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 6,
+            gap: 8,
           }}
         >
-          {/* Left segmented controls */}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
-            <Pressable
-              onPress={() => setViewMode((m) => (m === "workshop" ? "list" : "workshop"))}
-              accessibilityRole="button"
-              accessibilityLabel="Toggle Workshop or List view"
-              style={iconBtnStyle(true)}
-            >
-              <Icon
-                name={viewMode === "workshop" ? "Hammer" : "List"}
-                size={13}
-                color={theme.colors.accent}
-              />
-              <Text style={{ color: theme.colors.foreground, fontSize: 11, fontWeight: "600" }}>
-                {viewMode === "workshop" ? "工坊" : "列表"}
-              </Text>
-            </Pressable>
+          <Text
+            numberOfLines={1}
+            style={{
+              color: theme.colors.foregroundMuted,
+              fontSize: 12,
+              flex: 1,
+            }}
+          >
+            {summaryParts.join(" · ")}
+          </Text>
 
-            {initialWorkspaceId ? (
-              <Pressable
-                onPress={() => setScopeAll((v) => !v)}
-                accessibilityRole="button"
-                style={iconBtnStyle(scopeAll)}
-              >
-                <Icon
-                  name={scopeAll ? "Globe" : "Folder"}
-                  size={13}
-                  color={scopeAll ? theme.colors.accent : theme.colors.foregroundMuted}
-                />
-                <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>
-                  {scopeAll ? "全部" : "当前"}
-                </Text>
-              </Pressable>
-            ) : null}
-
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <Pressable
-              disabled={toggleSweepMutation.isPending}
-              onPress={() => toggleSweepMutation.mutate(!autoSweepEnabled)}
-              accessibilityRole="button"
-              accessibilityLabel="Toggle automatic orphan cleanup"
-              style={iconBtnStyle(autoSweepEnabled)}
+              onPress={() => setViewMode("workshop")}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 999,
+                backgroundColor: viewMode === "workshop" ? theme.colors.surface2 : "transparent",
+              }}
             >
-              <Icon
-                name={autoSweepEnabled ? "ShieldCheck" : "ShieldOff"}
-                size={13}
-                color={autoSweepEnabled ? theme.colors.statusSuccess : theme.colors.foregroundMuted}
-              />
               <Text
                 style={{
-                  color: autoSweepEnabled ? theme.colors.foreground : theme.colors.foregroundMuted,
-                  fontSize: 11,
+                  color:
+                    viewMode === "workshop" ? theme.colors.foreground : theme.colors.foregroundMuted,
+                  fontSize: 12,
+                  fontWeight: viewMode === "workshop" ? "600" : "400",
                 }}
               >
-                自动清理
+                Workshop
               </Text>
             </Pressable>
-
             <Pressable
-              onPress={() => setShowClosed((v) => !v)}
-              accessibilityRole="button"
-              style={iconBtnStyle(showClosed)}
+              onPress={() => setViewMode("list")}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 999,
+                backgroundColor: viewMode === "list" ? theme.colors.surface2 : "transparent",
+              }}
             >
-              <Icon
-                name="Archive"
-                size={13}
-                color={showClosed ? theme.colors.accent : theme.colors.foregroundMuted}
-              />
-              {!compact ? (
-                <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>已关闭</Text>
-              ) : null}
+              <Text
+                style={{
+                  color: viewMode === "list" ? theme.colors.foreground : theme.colors.foregroundMuted,
+                  fontSize: 12,
+                  fontWeight: viewMode === "list" ? "600" : "400",
+                }}
+              >
+                List
+              </Text>
             </Pressable>
-
-            {viewMode === "workshop" ? (
-              <View style={{ flexDirection: "row", gap: 3 }}>
-                <Pressable
-                  onPress={() => setScale((s) => Math.max(1.5, s - 0.5))}
-                  accessibilityLabel="Zoom out"
-                  style={iconBtnStyle(false)}
-                >
-                  <Icon name="ZoomOut" size={13} color={theme.colors.foregroundMuted} />
-                </Pressable>
-                <Pressable
-                  onPress={() => setScale((s) => Math.min(3.5, s + 0.5))}
-                  accessibilityLabel="Zoom in"
-                  style={iconBtnStyle(false)}
-                >
-                  <Icon name="ZoomIn" size={13} color={theme.colors.foregroundMuted} />
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
-
-          {/* Right live resource summary */}
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-            <Icon name="Cpu" size={12} color={theme.colors.foregroundMuted} />
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
-              {totalProcs}p · {formatCpu(totalCpu)} · {formatMemory(totalRss)}
-            </Text>
+            <Pressable
+              onPress={() => {
+                directory.reload();
+                void procQuery.refetch();
+              }}
+              accessibilityLabel="Refresh"
+              style={{ padding: 5, marginLeft: 2 }}
+            >
+              <Icon name="RefreshCw" size={14} color={theme.colors.foregroundMuted} />
+            </Pressable>
           </View>
         </View>
 
-        {/* Compact search & refresh row */}
+        {/* Row 2: Clean rounded search input + Zoom icons */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           <View
             style={{
@@ -256,22 +266,22 @@ export function WorkshopView({
               flexDirection: "row",
               alignItems: "center",
               gap: 6,
-              paddingHorizontal: 8,
-              borderRadius: 6,
+              paddingHorizontal: 10,
+              paddingVertical: 2,
+              borderRadius: 8,
               borderWidth: 1,
               borderColor: theme.colors.border,
               backgroundColor: theme.colors.surface0,
             }}
           >
-            <Icon name="Search" size={13} color={theme.colors.foregroundMuted} />
             <TextInput
               value={query}
               onChangeText={setQuery}
-              placeholder="搜索 Agent、Workspace、PID 或命令…"
+              placeholder="Find an agent, PID, or command"
               placeholderTextColor={theme.colors.foregroundMuted}
               style={{
                 flex: 1,
-                paddingVertical: 4,
+                paddingVertical: 5,
                 color: theme.colors.foreground,
                 fontSize: 12,
               }}
@@ -283,15 +293,151 @@ export function WorkshopView({
             ) : null}
           </View>
 
+          {viewMode === "workshop" ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+              <Pressable
+                onPress={() => setScale((s) => Math.max(1.2, Number((s - 0.3).toFixed(1))))}
+                accessibilityLabel="Zoom out"
+                style={{ padding: 6 }}
+              >
+                <Icon name="ZoomOut" size={15} color={theme.colors.foregroundMuted} />
+              </Pressable>
+              <Pressable
+                onPress={() => setScale((s) => Math.min(3.4, Number((s + 0.3).toFixed(1))))}
+                accessibilityLabel="Zoom in"
+                style={{ padding: 6 }}
+              >
+                <Icon name="ZoomIn" size={15} color={theme.colors.foregroundMuted} />
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Row 3: Scope pills (if inside workspace panel) + clean dot filter chips + Auto-clean pill */}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+          {initialWorkspaceId ? (
+            <>
+              <Pressable
+                onPress={() => setScopeAll(false)}
+                style={{
+                  paddingHorizontal: 9,
+                  paddingVertical: 3.5,
+                  borderRadius: 999,
+                  backgroundColor: !scopeAll ? theme.colors.surface2 : "transparent",
+                }}
+              >
+                <Text
+                  style={{
+                    color: !scopeAll ? theme.colors.foreground : theme.colors.foregroundMuted,
+                    fontSize: 11,
+                    fontWeight: !scopeAll ? "600" : "400",
+                  }}
+                >
+                  This workspace
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setScopeAll(true)}
+                style={{
+                  paddingHorizontal: 9,
+                  paddingVertical: 3.5,
+                  borderRadius: 999,
+                  backgroundColor: scopeAll ? theme.colors.surface2 : "transparent",
+                }}
+              >
+                <Text
+                  style={{
+                    color: scopeAll ? theme.colors.foreground : theme.colors.foregroundMuted,
+                    fontSize: 11,
+                    fontWeight: scopeAll ? "600" : "400",
+                  }}
+                >
+                  All workspaces
+                </Text>
+              </Pressable>
+            </>
+          ) : null}
+
           <Pressable
-            onPress={() => {
-              directory.reload();
-              void procQuery.refetch();
+            onPress={() => setStateFilter("all")}
+            style={{
+              paddingHorizontal: 9,
+              paddingVertical: 3.5,
+              borderRadius: 999,
+              backgroundColor: stateFilter === "all" ? theme.colors.surface2 : "transparent",
             }}
-            accessibilityLabel="Refresh"
-            style={iconBtnStyle(false)}
           >
-            <Icon name="RefreshCw" size={13} color={theme.colors.foregroundMuted} />
+            <Text
+              style={{
+                color: stateFilter === "all" ? theme.colors.foreground : theme.colors.foregroundMuted,
+                fontSize: 11,
+                fontWeight: stateFilter === "all" ? "600" : "400",
+              }}
+            >
+              All
+            </Text>
+          </Pressable>
+
+          {STATE_ORDER.filter((s) => counts[s] > 0 || stateFilter === s).map((s) => {
+            const active = stateFilter === s;
+            return (
+              <Pressable
+                key={s}
+                onPress={() => setStateFilter((prev) => (prev === s ? "all" : s))}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 5,
+                  paddingHorizontal: 8,
+                  paddingVertical: 3.5,
+                  borderRadius: 999,
+                  backgroundColor: active ? theme.colors.surface2 : "transparent",
+                }}
+              >
+                <View
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 999,
+                    backgroundColor: dotColorFor(s),
+                  }}
+                />
+                <Text
+                  style={{
+                    color: active ? theme.colors.foreground : theme.colors.foregroundMuted,
+                    fontSize: 11,
+                    fontWeight: active ? "600" : "400",
+                  }}
+                >
+                  {FILTER_LABEL[s]} {counts[s]}
+                </Text>
+              </Pressable>
+            );
+          })}
+
+          <Pressable
+            disabled={toggleSweepMutation.isPending}
+            onPress={() => toggleSweepMutation.mutate(!autoSweepEnabled)}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 3.5,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              marginLeft: "auto",
+            }}
+          >
+            <Icon
+              name={autoSweepEnabled ? "ShieldCheck" : "ShieldOff"}
+              size={11}
+              color={autoSweepEnabled ? theme.colors.statusSuccess : theme.colors.foregroundMuted}
+            />
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+              自动清理{autoSweepEnabled ? "" : "已关"}
+            </Text>
           </Pressable>
         </View>
 
@@ -305,7 +451,7 @@ export function WorkshopView({
         ) : null}
       </View>
 
-      {/* Main split body: 2.5D Workshop Canvas / List + Dual-Tab Dock */}
+      {/* Main split body: Clean White Workshop Canvas / List + Dual-Tab Dock */}
       <View style={{ flex: 1, flexDirection: compact ? "column" : "row" }}>
         <View style={{ flex: 1 }}>
           {viewMode === "workshop" ? (
