@@ -1,0 +1,15 @@
+{
+  "id": "agent-workshop",
+  "name": "Agent Workshop",
+  "description": "Retro RPG pixel-art workshop combining live agent monitoring, permissions, inter-agent messaging, and cross-platform process governance.",
+  "media": [],
+  "translations": {
+    "zh-CN": {
+      "name": "智能体工坊",
+      "description": "复古像素风智能体工坊，融合 Agent 状态动画、权限审批、Agent 间传信与跨平台进程监控治理"
+    }
+  },
+  "requirements": {
+    "paseo": ">=0.15.0"
+  }
+}
