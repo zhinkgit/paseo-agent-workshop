@@ -933,6 +933,129 @@ export const ARCHIVE_CHEST: PixelBitmap = {
   ],
 };
 
+// 14x18 Interactive Oak Door (clicking opens the focused agent session)
+export const DOOR_SPRITE: PixelBitmap = {
+  key: "door-v1",
+  width: 14,
+  height: 18,
+  rows: [
+    ".oooooooooooo.",
+    "odwwwwwwwwwwdo",
+    "odwWWWWWWWWwdo",
+    "odwWddddddWwdo",
+    "odwWdwwwwdWwdo",
+    "odwWdwwwwdWwdo",
+    "odwWddddddWwdo",
+    "odwWWWWWWWWwdo",
+    "odwWWWWWWbbwdo",
+    "odwWWWWWWbBwdo",
+    "odwWddddddWwdo",
+    "odwWdwwwwdWwdo",
+    "odwWdwwwwdWwdo",
+    "odwWddddddWwdo",
+    "odwWWWWWWWWwdo",
+    "oddddddddddddo",
+    "oooooooooooooo",
+    ".qqqqqqqqqqqq.",
+  ],
+};
+
+// 12x14 Interactive Pixel Mailbox (clicking opens inline message composer inside the room)
+export const MAILBOX_SPRITE: PixelBitmap = {
+  key: "mailbox-v1",
+  width: 12,
+  height: 14,
+  rows: [
+    "..oooooooo..",
+    ".occcccccco.",
+    "occcppppccco",
+    "occCooooCcco",
+    "occcCCCCccco",
+    "oCCCCCCCCCCo",
+    ".oooooooooo.",
+    "....oWWo..ro",
+    "....oWWo.rro",
+    "....oWdo..o.",
+    "....oWdo....",
+    "...ooWdoo...",
+    "..qooooooqq.",
+    "...qqqqqq...",
+  ],
+};
+
+// 12x14 Interactive Power Breaker Lever (clicking stops agent processes)
+const BREAKER_ACTIVE: PixelBitmap = {
+  key: "breaker-on-v1",
+  width: 12,
+  height: 14,
+  rows: [
+    ".oooooooooo.",
+    "ommmmmmmmmmo",
+    "omjjoMMojjmo",
+    "omjrorrojjmo",
+    "omjrorrojjmo",
+    "omjjoooojjmo",
+    "omjjjjjjjjmo",
+    "omjggjjrrjmo",
+    "omjjjjjjjjmo",
+    "oMMMMMMMMMMo",
+    ".oooooooooo.",
+    "....oMMo....",
+    "...qooooq...",
+    "....qqqq....",
+  ],
+};
+
+const BREAKER_RUNAWAY: PixelBitmap = {
+  key: "breaker-run-v1",
+  width: 12,
+  height: 14,
+  rows: [
+    "roooooooooor",
+    "orrrrrrrrrro",
+    "omjjoaaOjjmo".replace("O", "o"),
+    "omjrorrojjmo",
+    "omjrorrojjmo",
+    "omjjoooojjmo",
+    "omjjjjjjjjmo",
+    "omjrrjjrrjmo",
+    "omjjjjjjjjmo",
+    "oRRRRRRRRRRo",
+    ".oooooooooo.",
+    "....oMMo....",
+    "...rroorr...",
+    "....rrrr....",
+  ],
+};
+
+const BREAKER_OFF: PixelBitmap = {
+  key: "breaker-off-v1",
+  width: 12,
+  height: 14,
+  rows: [
+    ".oooooooooo.",
+    "ommmmmmmmmmo",
+    "omjjjjjjjjmo",
+    "omjjoooojjmo",
+    "omjjMMMMjjmo",
+    "omjjMMMMjjmo",
+    "omjjoooojjmo",
+    "omjjjjjjjjmo",
+    "omjjjjjjjjmo",
+    "oMMMMMMMMMMo",
+    ".oooooooooo.",
+    "....oMMo....",
+    "...qooooq...",
+    "....qqqq....",
+  ],
+};
+
+export function breakerSprite(load: MachineLoad, frame: number): PixelBitmap {
+  if (load === "runaway") return frame % 2 === 0 ? BREAKER_RUNAWAY : BREAKER_ACTIVE;
+  if (load === "calm" || load === "hot") return BREAKER_ACTIVE;
+  return BREAKER_OFF;
+}
+
 // 12x9 Sealed Parchment Envelope for flying inter-agent messages
 export const ENVELOPE_SPRITE: PixelBitmap = {
   key: "envelope-v3",

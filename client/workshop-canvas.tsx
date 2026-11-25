@@ -1,5 +1,13 @@
-// Studio-Workshop pixel canvas with integrated per-room Big Screen, separated workspace/title display,
-// in-scene console controls (Open / Message / Archive / Stop), and Agent-to-Agent delegation visualization.
+// Truly Diegetic Pixel Studio-Workshop Canvas:
+// ZERO external headers or button bars — every control and display lives INSIDE the room as a pixel object:
+// - Wooden Door (top-left wall) = Open agent session
+// - Wall Signboard (top-center wall) = Project & Workspace name
+// - Wall Gauge (top-right wall) = Process count / CPU / RAM
+// - Pixel Mailbox (left aisle) = Send message (opens in-room parchment popover)
+// - Power Breaker Switch (left aisle) = Stop all processes
+// - Floor-standing Pixel Big Screen (lower-left) = Latest real message + delegation badge (click -> Detail Dock!)
+// - Archive Cabinet (bottom-right) = Archive active agent / view closed archive
+// - Artisans & Workbenches = Click to focus which agent the room's Big Screen & props control
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
@@ -22,8 +30,11 @@ import {
   artisanColors,
   artisanFrames,
   benchSprite,
+  breakerSprite,
+  DOOR_SPRITE,
   ENVELOPE_SPRITE,
   machineFrames,
+  MAILBOX_SPRITE,
   WORKBENCH_SPRITE,
   workshopPalette,
   type WorkshopPalette,
@@ -34,9 +45,7 @@ import { STATE_LABEL, type WorkshopAgent, type WorkshopRoom } from "./workshop-m
 export interface WorkshopCanvasProps {
   theme: PluginTheme;
   rooms: readonly WorkshopRoom[];
-  /** Currently opened agent in the Detail Dock (null if dock is closed). */
   selectedId: string | null;
-  /** Opens/toggles the Detail Dock for this agent (triggered by clicking the room's Big Screen). */
   onOpenDetail: (agentId: string) => void;
   onSelectArchive: (room: WorkshopRoom) => void;
   onOpenAgent?: (agentId: string, workspaceId?: string) => void;
@@ -255,7 +264,6 @@ const FlyingEnvelope = memo(function FlyingEnvelope({
   );
 });
 
-/** Draws a dashed connector line between a calling parent agent and its child agent in the same room. */
 const DelegationConnector = memo(function DelegationConnector({
   from,
   to,
@@ -292,6 +300,24 @@ const DelegationConnector = memo(function DelegationConnector({
   );
 });
 
+/** Crisp micro-tag printed directly on an in-room interactive pixel prop. */
+function PropTag({ text, danger = false }: { text: string; danger?: boolean }) {
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        marginTop: 1,
+        paddingHorizontal: 3,
+        paddingVertical: 0.5,
+        borderRadius: 2,
+        backgroundColor: danger ? "#b91c1c" : "rgba(20, 22, 26, 0.78)",
+      }}
+    >
+      <Text style={{ color: "#ffffff", fontSize: 8, fontWeight: "700" }}>{text}</Text>
+    </View>
+  );
+}
+
 const WorkshopRoomView = memo(function WorkshopRoomView({
   room,
   theme,
@@ -299,7 +325,6 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
   scale,
   frame,
   maxCols,
-  availableW,
   selectedId,
   toolByAgent,
   latestByAgent,
@@ -317,7 +342,6 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
   scale: number;
   frame: number;
   maxCols: number;
-  availableW: number;
   selectedId: string | null;
   toolByAgent: ReadonlyMap<string, string>;
   latestByAgent: ReadonlyMap<string, LatestMessagePreview>;
@@ -336,12 +360,11 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
   );
   const backdrop = useMemo(() => buildWorkshopBackdrop(geom), [geom]);
 
-  // Local room focus: which agent is currently displayed on this room's Big Screen.
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  const [composerOpen, setComposerOpen] = useState(false);
+  const [popover, setPopover] = useState<"mail" | "archive" | null>(null);
   const [draft, setDraft] = useState("");
-  const [inlineBusy, setInlineBusy] = useState<string | null>(null);
-  const [inlineNotice, setInlineNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const activeAgent: WorkshopAgent | null = useMemo(() => {
     if (focusedId) {
@@ -355,12 +378,18 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
     return stations[0] ?? null;
   }, [focusedId, selectedId, stations]);
 
-  // Reset inline composer when switching the focused agent on the Big Screen.
   useEffect(() => {
-    setComposerOpen(false);
+    setPopover(null);
     setDraft("");
-    setInlineNotice(null);
+    setToastMsg(null);
   }, [activeAgent?.id]);
+
+  // Auto-fade transient in-room status toast after 3.5s
+  useEffect(() => {
+    if (!toastMsg) return;
+    const t = setTimeout(() => setToastMsg(null), 3_500);
+    return () => clearTimeout(t);
+  }, [toastMsg]);
 
   const coordsByAgent = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
@@ -384,7 +413,6 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
 
   const roomPxW = geom.width * scale;
   const roomPxH = geom.height * scale;
-  const cardWidth = Math.max(roomPxW, Math.min(availableW, Math.max(roomPxW, 300)));
 
   const dotColor =
     room.runaways.length > 0
@@ -398,615 +426,630 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
   const preview = activeAgent ? latestByAgent.get(activeAgent.id) : undefined;
   const isDetailOpenForFocused = Boolean(activeAgent && selectedId === activeAgent.id);
 
-  const runInline = async (key: string, fn: () => Promise<string>) => {
-    setInlineBusy(key);
-    setInlineNotice(null);
+  const runPropAction = async (fn: () => Promise<string>) => {
+    setBusy(true);
     try {
-      const msg = await fn();
-      setInlineNotice(msg);
+      setToastMsg(await fn());
     } catch (err) {
-      setInlineNotice(err instanceof Error ? err.message : String(err));
+      setToastMsg(err instanceof Error ? err.message : String(err));
     } finally {
-      setInlineBusy(null);
+      setBusy(false);
     }
   };
 
-  const consoleBtn = {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-  };
-
   return (
-    <View
-      style={{
-        width: cardWidth,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: room.runaways.length > 0 ? theme.colors.statusDanger : palette.pillBorder,
-        backgroundColor: theme.colors.surface0,
-        overflow: "hidden",
-      }}
-    >
-      {/* Separated Room Header: Left = Project/Workspace Name (full, unclipped), Right = Resource Gauge */}
-      <View
+    <View style={{ width: roomPxW, height: roomPxH, position: "relative" }}>
+      {/* Continuous 2.5D Pixel Studio Room Backdrop */}
+      <PixelSprite
+        bitmap={backdrop}
+        colors={palette.colors}
+        paletteKey={palette.key}
+        scale={scale}
+        style={{ position: "absolute", left: 0, top: 0 }}
+      />
+
+      {/* 1. Interactive Wooden Door on top-left wall = 打开会话 */}
+      <Pressable
+        disabled={!activeAgent?.agent || !onOpenAgent}
+        onPress={() => {
+          if (activeAgent?.agent && onOpenAgent) {
+            onOpenAgent(activeAgent.id, activeAgent.workspaceId);
+          }
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={activeAgent ? `点击木门打开 ${activeAgent.title} 会话` : "工坊木门"}
         style={{
-          paddingHorizontal: 10,
-          paddingVertical: 7,
-          backgroundColor: theme.colors.surface1,
-          borderBottomWidth: 1,
-          borderBottomColor: theme.colors.border,
-          gap: 3,
+          position: "absolute",
+          left: geom.doorPos.x * scale,
+          top: geom.doorPos.y * scale,
+          zIndex: 320,
+          alignItems: "center",
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
-            <View
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 999,
-                backgroundColor: dotColor,
-              }}
-            />
-            <Text
-              style={{
-                color: theme.colors.foreground,
-                fontSize: 12,
-                fontWeight: "700",
-                flexShrink: 1,
-              }}
-            >
-              {room.projectName}
-            </Text>
-          </View>
-          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
-            {room.totalProcesses > 0
-              ? `${room.totalProcesses} 进程 · ${formatCpu(room.totalCpu)} · ${formatMemory(room.totalRssKb)}`
-              : `${stations.length} 个智能体`}
+        <PixelSprite
+          bitmap={DOOR_SPRITE}
+          colors={palette.colors}
+          paletteKey={palette.key}
+          scale={scale}
+        />
+        {activeAgent?.agent ? <PropTag text="打开" /> : null}
+      </Pressable>
+
+      {/* 2. Wall-mounted Signboard Plaque on top-center wall = 项目名 & 工作区名 (separated & unclipped) */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: geom.signRect.x * scale,
+          top: geom.signRect.y * scale,
+          width: geom.signRect.w * scale,
+          height: geom.signRect.h * scale,
+          zIndex: 310,
+          paddingHorizontal: 6,
+          paddingVertical: 2,
+          borderRadius: 3,
+          borderWidth: 1.5,
+          borderColor: "#1f242b",
+          backgroundColor: palette.isDark ? "#232832" : "#ffffff",
+          justifyContent: "center",
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <View style={{ width: 6, height: 6, borderRadius: 999, backgroundColor: dotColor }} />
+          <Text
+            numberOfLines={1}
+            style={{ color: theme.colors.foreground, fontSize: 10, fontWeight: "700", flex: 1 }}
+          >
+            {room.projectName}
           </Text>
         </View>
-
-        {/* Secondary line: Workspace branch/name shown completely without truncation */}
         {room.workspaceTitle && room.workspaceTitle !== room.projectName ? (
-          <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
-            <Text
-              style={{ color: theme.colors.foregroundMuted, fontSize: 11, flex: 1 }}
-            >
-              工作区：{room.workspaceTitle}
-            </Text>
-            {room.runaways.length > 0 ? (
-              <Text style={{ color: theme.colors.statusDanger, fontSize: 10, fontWeight: "700" }}>
-                {room.runaways.length} 个失控残留
-              </Text>
-            ) : null}
-          </View>
+          <Text
+            numberOfLines={1}
+            style={{ color: theme.colors.foregroundMuted, fontSize: 8.5, marginTop: 1 }}
+          >
+            {room.workspaceTitle}
+          </Text>
         ) : null}
       </View>
 
-      {/* Pixel Studio Room Scene */}
-      <ScrollView
-        horizontal={roomPxW > cardWidth}
-        showsHorizontalScrollIndicator={roomPxW > cardWidth}
-        contentContainerStyle={{ alignItems: "center", justifyContent: "center", minWidth: cardWidth }}
-        style={{ backgroundColor: palette.canvasBg }}
+      {/* 3. Wall-mounted Resource Gauge on top-right wall = 进程 / CPU / 内存 */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: geom.gaugeRect.x * scale,
+          top: geom.gaugeRect.y * scale,
+          width: geom.gaugeRect.w * scale,
+          height: geom.gaugeRect.h * scale,
+          zIndex: 310,
+          paddingHorizontal: 5,
+          borderRadius: 3,
+          borderWidth: 1.5,
+          borderColor: room.runaways.length > 0 ? "#dc2626" : "#1f242b",
+          backgroundColor: "#18202c",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
       >
-        <View style={{ width: roomPxW, height: roomPxH, position: "relative" }}>
+        <Text
+          numberOfLines={1}
+          style={{
+            color: room.runaways.length > 0 ? "#fca5a5" : "#86efac",
+            fontSize: 8.5,
+            fontWeight: "700",
+          }}
+        >
+          {room.totalProcesses > 0
+            ? `${room.totalProcesses}p · ${formatCpu(room.totalCpu)}`
+            : `${stations.length} 工匠`}
+        </Text>
+        {room.totalProcesses > 0 ? (
+          <Text numberOfLines={1} style={{ color: "#cbd5e1", fontSize: 8 }}>
+            {formatMemory(room.totalRssKb)}
+          </Text>
+        ) : null}
+      </View>
+
+      {/* 4. Interactive Pixel Mailbox in left aisle = 发消息 */}
+      {activeAgent?.agent && activeAgent.state !== "closed" && activeAgent.state !== "runaway" ? (
+        <Pressable
+          onPress={() => setPopover((p) => (p === "mail" ? null : "mail"))}
+          accessibilityRole="button"
+          accessibilityLabel={`点击邮筒给 ${activeAgent.title} 发消息`}
+          style={{
+            position: "absolute",
+            left: geom.mailboxPos.x * scale,
+            top: geom.mailboxPos.y * scale,
+            zIndex: 360,
+            alignItems: "center",
+          }}
+        >
           <PixelSprite
-            bitmap={backdrop}
+            bitmap={MAILBOX_SPRITE}
             colors={palette.colors}
             paletteKey={palette.key}
             scale={scale}
-            style={{ position: "absolute", left: 0, top: 0 }}
           />
+          <PropTag text="发信" />
+        </Pressable>
+      ) : null}
 
-          {/* Dashed Delegation Lines between Caller -> Callee agents in the same room */}
-          {room.delegations
-            .filter((d) => d.sameRoom)
-            .map((d) => {
-              const from = coordsByAgent.get(d.fromId);
-              const to = coordsByAgent.get(d.toId);
-              if (!from || !to) return null;
-              return (
-                <DelegationConnector
-                  key={`${d.fromId}->${d.toId}`}
-                  from={{ x: from.x + 7 * scale, y: from.y + 9 * scale }}
-                  to={{ x: to.x + 7 * scale, y: to.y + 9 * scale }}
-                  color={theme.colors.accent}
-                />
-              );
-            })}
+      {/* 5. Interactive Power Breaker Switch in left aisle = 停进程 */}
+      {activeAgent ? (
+        <Pressable
+          disabled={busy || activeAgent.processCount === 0}
+          onPress={() => {
+            const id = activeAgent.id;
+            void runPropAction(async () => {
+              const res = await onStopAllProcesses(id);
+              if (res.failed > 0) return `停止失败：${res.error ?? "权限不足"}`;
+              if (res.stillRunning > 0) return `已拉闸，${res.stillRunning} 个进程退出中`;
+              if (res.stopped > 0) return `已停止 ${res.stopped} 个进程`;
+              return "进程已退出";
+            });
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`点击电闸停止 ${activeAgent.title} 的进程`}
+          style={{
+            position: "absolute",
+            left: geom.breakerPos.x * scale,
+            top: geom.breakerPos.y * scale,
+            zIndex: 360,
+            alignItems: "center",
+            opacity: activeAgent.processCount > 0 ? 1 : 0.45,
+          }}
+        >
+          <PixelSprite
+            bitmap={breakerSprite(activeAgent.machineLoad, frame)}
+            colors={palette.colors}
+            paletteKey={palette.key}
+            scale={scale}
+          />
+          <PropTag
+            text={activeAgent.processCount > 0 ? `停(${activeAgent.processCount})` : "电闸"}
+            danger={activeAgent.state === "runaway"}
+          />
+        </Pressable>
+      ) : null}
 
-          {stations.map((item, idx) => {
-            const origin = geom.stationOrigin(idx);
-            const benchLeft = origin.x * scale;
-            const benchTop = origin.y * scale;
-            const podLeft = (origin.x + 28) * scale;
-            const podTop = (origin.y + 4) * scale;
-            const isRunaway = item.state === "runaway";
-            const isFocused = activeAgent?.id === item.id;
-            const machineSprite =
-              item.machineLoad !== "none" ? machineFrames(item.machineLoad)[frame % 2]! : null;
-            const charTarget = coordsByAgent.get(item.id) ?? {
-              x: (origin.x + 7) * scale,
-              y: (origin.y + 11) * scale,
-            };
+      {/* 6. Dashed Agent-to-Agent Delegation Lines */}
+      {room.delegations
+        .filter((d) => d.sameRoom)
+        .map((d) => {
+          const from = coordsByAgent.get(d.fromId);
+          const to = coordsByAgent.get(d.toId);
+          if (!from || !to) return null;
+          return (
+            <DelegationConnector
+              key={`${d.fromId}->${d.toId}`}
+              from={{ x: from.x + 7 * scale, y: from.y + 9 * scale }}
+              to={{ x: to.x + 7 * scale, y: to.y + 9 * scale }}
+              color={theme.colors.accent}
+            />
+          );
+        })}
 
-            const toolWord = toolByAgent.get(item.id);
-            const bubbleText = isRunaway
-              ? `失控 ${item.processCount}p`
-              : item.state === "needs-input"
-                ? "待审批"
-                : item.state === "failed"
-                  ? "异常"
-                  : item.callingTargets.length > 0
-                    ? `调用→${item.callingTargets[0]!.title.slice(0, 6)}`
-                    : toolWord
-                      ? toolWord
-                      : item.machineLoad === "hot"
-                        ? `${formatCpu(item.cpu)}`
-                        : null;
-            const bubbleTone: "tool" | "warn" | "danger" =
-              isRunaway || item.state === "failed"
-                ? "danger"
-                : item.state === "needs-input" || item.machineLoad === "hot"
-                  ? "warn"
-                  : "tool";
+      {/* 7. Workbenches + Process Gear Pods + Smooth-walking Artisans */}
+      {stations.map((item, idx) => {
+        const origin = geom.stationOrigin(idx);
+        const benchLeft = origin.x * scale;
+        const benchTop = origin.y * scale;
+        const podLeft = (origin.x + 28) * scale;
+        const podTop = (origin.y + 4) * scale;
+        const isRunaway = item.state === "runaway";
+        const isFocused = activeAgent?.id === item.id;
+        const machineSprite =
+          item.machineLoad !== "none" ? machineFrames(item.machineLoad)[frame % 2]! : null;
+        const charTarget = coordsByAgent.get(item.id) ?? {
+          x: (origin.x + 7) * scale,
+          y: (origin.y + 11) * scale,
+        };
 
-            return (
-              <View key={item.id} style={{ position: "absolute", left: 0, top: 0 }}>
-                {/* Clicking bench focuses this agent on the room's Big Screen */}
-                <Pressable
-                  onPress={() => setFocusedId(item.id)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`聚焦 ${item.title} 工作台`}
-                  style={{
-                    position: "absolute",
-                    left: benchLeft,
-                    top: benchTop,
-                    zIndex: Math.round(benchTop) + 20,
-                  }}
-                >
-                  <PixelSprite
-                    bitmap={benchSprite(item.state, frame)}
-                    colors={palette.colors}
-                    paletteKey={palette.key}
-                    scale={scale}
-                  />
-                </Pressable>
+        const toolWord = toolByAgent.get(item.id);
+        const bubbleText = isRunaway
+          ? `失控 ${item.processCount}p`
+          : item.state === "needs-input"
+            ? "待审批"
+            : item.state === "failed"
+              ? "异常"
+              : item.callingTargets.length > 0
+                ? `调用→${item.callingTargets[0]!.title.slice(0, 6)}`
+                : toolWord
+                  ? toolWord
+                  : item.machineLoad === "hot"
+                    ? `${formatCpu(item.cpu)}`
+                    : null;
+        const bubbleTone: "tool" | "warn" | "danger" =
+          isRunaway || item.state === "failed"
+            ? "danger"
+            : item.state === "needs-input" || item.machineLoad === "hot"
+              ? "warn"
+              : "tool";
 
-                {machineSprite ? (
-                  <Pressable
-                    onPress={() => setFocusedId(item.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`聚焦 ${item.title} 进程机械`}
-                    style={{
-                      position: "absolute",
-                      left: podLeft,
-                      top: podTop,
-                      zIndex: Math.round(podTop) + 25,
-                      alignItems: "center",
-                    }}
-                  >
-                    {isRunaway && bubbleText ? (
-                      <View
-                        pointerEvents="none"
-                        style={{
-                          position: "absolute",
-                          bottom: machineSprite.height * scale + 2,
-                          paddingHorizontal: 5,
-                          paddingVertical: 1,
-                          borderRadius: 2,
-                          borderWidth: 1,
-                          borderColor: "#14161a",
-                          backgroundColor: "#b91c1c",
-                          zIndex: 999,
-                        }}
-                      >
-                        <Text style={{ color: "#ffffff", fontSize: 9, fontWeight: "700" }}>
-                          {bubbleText}
-                        </Text>
-                      </View>
-                    ) : null}
-
-                    {isFocused && isRunaway ? (
-                      <View
-                        pointerEvents="none"
-                        style={{
-                          position: "absolute",
-                          bottom: -1,
-                          width: machineSprite.width * scale + 6,
-                          height: Math.max(7, scale * 3),
-                          borderRadius: 999,
-                          borderWidth: 2,
-                          borderColor: theme.colors.statusDanger,
-                          backgroundColor: "rgba(239, 68, 68, 0.2)",
-                        }}
-                      />
-                    ) : null}
-
-                    <PixelSprite
-                      bitmap={machineSprite}
-                      colors={palette.colors}
-                      paletteKey={palette.key}
-                      scale={scale}
-                    />
-                  </Pressable>
-                ) : null}
-
-                {/* Clicking character focuses it on the room's Big Screen (does NOT pop detail) */}
-                {!isRunaway ? (
-                  <WalkingArtisan
-                    item={item}
-                    palette={palette}
-                    targetX={charTarget.x}
-                    targetY={charTarget.y}
-                    scale={scale}
-                    frame={frame}
-                    focused={isFocused}
-                    bubbleText={bubbleText}
-                    bubbleTone={bubbleTone}
-                    onPress={() => setFocusedId(item.id)}
-                  />
-                ) : null}
-              </View>
-            );
-          })}
-
-          {/* Corner Archive Cabinet */}
-          {room.archived.length > 0 ? (
+        return (
+          <View key={item.id} style={{ position: "absolute", left: 0, top: 0 }}>
             <Pressable
-              onPress={() => onSelectArchive(room)}
+              onPress={() => setFocusedId(item.id)}
               accessibilityRole="button"
-              accessibilityLabel={`打开档案柜（${room.archived.length} 个已关闭智能体）`}
+              accessibilityLabel={`聚焦 ${item.title} 工作台`}
               style={{
                 position: "absolute",
-                left: geom.chestPos.x * scale,
-                top: geom.chestPos.y * scale,
-                zIndex: 400,
-                alignItems: "center",
+                left: benchLeft,
+                top: benchTop,
+                zIndex: Math.round(benchTop) + 20,
               }}
             >
-              <View
-                pointerEvents="none"
-                style={{
-                  paddingHorizontal: 4,
-                  paddingVertical: 0.5,
-                  borderRadius: 2,
-                  borderWidth: 1,
-                  borderColor: "#1f242b",
-                  backgroundColor: palette.pillBg,
-                  marginBottom: 1,
-                }}
-              >
-                <Text style={{ color: theme.colors.foreground, fontSize: 8, fontWeight: "700" }}>
-                  {room.archived.length}
-                </Text>
-              </View>
               <PixelSprite
-                bitmap={ARCHIVE_CHEST}
+                bitmap={benchSprite(item.state, frame)}
                 colors={palette.colors}
                 paletteKey={palette.key}
                 scale={scale}
               />
             </Pressable>
-          ) : null}
 
-          {roomEnvelopes.map((env) => {
-            const from = coordsByAgent.get(env.fromId)!;
-            const to = coordsByAgent.get(env.toId)!;
-            return <FlyingEnvelope key={env.id} from={from} to={to} palette={palette} scale={scale} />;
-          })}
-        </View>
-      </ScrollView>
-
-      {/* Integrated Workshop Big Screen + Diegetic Console Controls */}
-      {activeAgent ? (
-        <View
-          style={{
-            borderTopWidth: 1,
-            borderTopColor: theme.colors.border,
-            backgroundColor: theme.colors.surface1,
-            padding: 8,
-            gap: 7,
-          }}
-        >
-          {/* Multi-agent quick switcher tabs inside the room when > 1 agent */}
-          {stations.length > 1 ? (
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
-              {stations.map((s) => {
-                const isCur = s.id === activeAgent.id;
-                return (
-                  <Pressable
-                    key={s.id}
-                    onPress={() => setFocusedId(s.id)}
-                    style={{
-                      paddingHorizontal: 7,
-                      paddingVertical: 2,
-                      borderRadius: 999,
-                      borderWidth: 1,
-                      borderColor: isCur ? theme.colors.accent : theme.colors.border,
-                      backgroundColor: isCur ? theme.colors.surface2 : theme.colors.surface0,
-                      maxWidth: 130,
-                    }}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={{
-                        color: isCur ? theme.colors.foreground : theme.colors.foregroundMuted,
-                        fontSize: 10,
-                        fontWeight: isCur ? "700" : "400",
-                      }}
-                    >
-                      {s.title}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
-
-          {/* Clickable Big Screen Monitor: displays active agent's full title, latest message & delegations.
-              Clicking this Big Screen opens/toggles the Detail Dock! */}
-          <Pressable
-            onPress={() => onOpenDetail(activeAgent.id)}
-            accessibilityRole="button"
-            accessibilityLabel={`点击大屏查看 ${activeAgent.title} 详细信息`}
-            style={{
-              padding: 9,
-              borderRadius: 7,
-              borderWidth: isDetailOpenForFocused ? 2 : 1,
-              borderColor: isDetailOpenForFocused ? theme.colors.accent : "#334155",
-              backgroundColor: palette.isDark ? "#0f172a" : "#1e293b",
-              gap: 5,
-            }}
-          >
-            {/* Big Screen Top Bar: Full Agent Title + Status + Detail Hint */}
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flex: 1, minWidth: 0 }}>
-                <View
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: 999,
-                    backgroundColor:
-                      activeAgent.state === "runaway" || activeAgent.state === "failed"
-                        ? "#f87171"
-                        : activeAgent.state === "needs-input"
-                          ? "#fbbf24"
-                          : activeAgent.state === "working"
-                            ? "#4ade80"
-                            : "#94a3b8",
-                  }}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={{ color: "#f8fafc", fontSize: 11, fontWeight: "700", flex: 1 }}
-                >
-                  {activeAgent.title}
-                </Text>
-              </View>
-              <Text style={{ color: "#94a3b8", fontSize: 10 }}>
-                {STATE_LABEL[activeAgent.state]} · {isDetailOpenForFocused ? "收起详情" : "点击看详情 ▸"}
-              </Text>
-            </View>
-
-            {/* Latest Real Conversation Message on the Big Screen */}
-            <Text
-              numberOfLines={2}
-              style={{
-                color: preview ? "#e2e8f0" : "#94a3b8",
-                fontSize: 11,
-                lineHeight: 16,
-              }}
-            >
-              {preview
-                ? `${preview.role === "user" ? "你：" : preview.role === "assistant" ? "回复：" : ""}${preview.text}`
-                : activeAgent.state === "runaway"
-                  ? `该智能体已关闭，但仍有 ${activeAgent.processCount} 个进程占用 ${formatMemory(activeAgent.rssKb)} 内存。`
-                  : "暂无近期对话消息，点击大屏可查看完整记录与进程。"}
-            </Text>
-
-            {/* Agent-to-Agent Delegation Indicator on the Big Screen */}
-            {room.delegations.length > 0 ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 2 }}>
-                {room.delegations.slice(0, 3).map((d) => (
+            {machineSprite ? (
+              <Pressable
+                onPress={() => setFocusedId(item.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`聚焦 ${item.title} 进程机械`}
+                style={{
+                  position: "absolute",
+                  left: podLeft,
+                  top: podTop,
+                  zIndex: Math.round(podTop) + 25,
+                  alignItems: "center",
+                }}
+              >
+                {isRunaway && bubbleText ? (
                   <View
-                    key={`${d.fromId}->${d.toId}`}
+                    pointerEvents="none"
                     style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 4,
-                      paddingHorizontal: 6,
-                      paddingVertical: 2,
-                      borderRadius: 4,
-                      backgroundColor: "rgba(59, 130, 246, 0.22)",
+                      position: "absolute",
+                      bottom: machineSprite.height * scale + 2,
+                      paddingHorizontal: 5,
+                      paddingVertical: 1,
+                      borderRadius: 2,
                       borderWidth: 1,
-                      borderColor: "rgba(96, 165, 250, 0.45)",
+                      borderColor: "#14161a",
+                      backgroundColor: "#b91c1c",
+                      zIndex: 999,
                     }}
                   >
-                    <Icon name="GitBranch" size={10} color="#93c5fd" />
-                    <Text numberOfLines={1} style={{ color: "#dbeafe", fontSize: 10 }}>
-                      {d.fromTitle.slice(0, 10)} ⟶ {d.toTitle.slice(0, 12)}
+                    <Text style={{ color: "#ffffff", fontSize: 9, fontWeight: "700" }}>
+                      {bubbleText}
                     </Text>
                   </View>
-                ))}
-              </View>
-            ) : null}
-          </Pressable>
+                ) : null}
 
-          {/* In-scene Integrated Controls directly beneath the Big Screen */}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-            {activeAgent.agent && onOpenAgent ? (
-              <Pressable
-                onPress={() => onOpenAgent(activeAgent.id, activeAgent.workspaceId)}
-                accessibilityRole="button"
-                accessibilityLabel={`打开 ${activeAgent.title} 会话`}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 4,
-                  paddingHorizontal: 9,
-                  paddingVertical: 4,
-                  borderRadius: 5,
-                  backgroundColor: theme.colors.accent,
-                }}
-              >
-                <Icon name="ExternalLink" size={11} color={theme.colors.accentForeground} />
-                <Text style={{ color: theme.colors.accentForeground, fontSize: 11, fontWeight: "600" }}>
-                  打开
-                </Text>
-              </Pressable>
-            ) : null}
+                {isFocused && isRunaway ? (
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      position: "absolute",
+                      bottom: -1,
+                      width: machineSprite.width * scale + 6,
+                      height: Math.max(7, scale * 3),
+                      borderRadius: 999,
+                      borderWidth: 2,
+                      borderColor: theme.colors.statusDanger,
+                      backgroundColor: "rgba(239, 68, 68, 0.2)",
+                    }}
+                  />
+                ) : null}
 
-            {activeAgent.agent && activeAgent.state !== "closed" && activeAgent.state !== "runaway" ? (
-              <Pressable
-                onPress={() => setComposerOpen((v) => !v)}
-                accessibilityRole="button"
-                accessibilityLabel={`给 ${activeAgent.title} 发消息`}
-                style={consoleBtn}
-              >
-                <Icon name="Send" size={11} color={theme.colors.foregroundMuted} />
-                <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>发消息</Text>
-              </Pressable>
-            ) : null}
-
-            {activeAgent.agent && !activeAgent.agent.archivedAt ? (
-              <Pressable
-                disabled={inlineBusy !== null}
-                onPress={() => {
-                  const id = activeAgent.id;
-                  void runInline("archive", async () => {
-                    await onArchiveAgent(id);
-                    return "已归档";
-                  });
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`归档 ${activeAgent.title}`}
-                style={consoleBtn}
-              >
-                <Icon name="Archive" size={11} color={theme.colors.foregroundMuted} />
-                <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>
-                  {inlineBusy === "archive" ? "归档中…" : "归档"}
-                </Text>
-              </Pressable>
-            ) : null}
-
-            {activeAgent.processCount > 0 ? (
-              <Pressable
-                disabled={inlineBusy !== null}
-                onPress={() => {
-                  const id = activeAgent.id;
-                  void runInline("stop", async () => {
-                    const res = await onStopAllProcesses(id);
-                    if (res.failed > 0) return `停止失败：${res.error ?? "权限不足"}`;
-                    if (res.stillRunning > 0) return `已发信号（${res.stillRunning} 个退出中）`;
-                    if (res.stopped > 0) return `已停止 ${res.stopped} 个进程`;
-                    return "进程已退出";
-                  });
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`停止 ${activeAgent.title} 全部进程`}
-                style={
-                  activeAgent.state === "runaway"
-                    ? {
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 4,
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 5,
-                        backgroundColor: theme.colors.statusDanger,
-                      }
-                    : consoleBtn
-                }
-              >
-                <Icon
-                  name="Square"
-                  size={10}
-                  color={activeAgent.state === "runaway" ? "#ffffff" : theme.colors.statusDanger}
+                <PixelSprite
+                  bitmap={machineSprite}
+                  colors={palette.colors}
+                  paletteKey={palette.key}
+                  scale={scale}
                 />
-                <Text
-                  style={{
-                    color: activeAgent.state === "runaway" ? "#ffffff" : theme.colors.foreground,
-                    fontSize: 11,
-                    fontWeight: activeAgent.state === "runaway" ? "700" : "500",
-                  }}
-                >
-                  {inlineBusy === "stop" ? "停止中…" : `停进程 (${activeAgent.processCount})`}
-                </Text>
               </Pressable>
             ) : null}
 
-            <Pressable
-              onPress={() => onOpenDetail(activeAgent.id)}
-              accessibilityRole="button"
-              accessibilityLabel={`打开 ${activeAgent.title} 详情栏`}
-              style={[consoleBtn, { marginLeft: "auto" }]}
+            {!isRunaway ? (
+              <WalkingArtisan
+                item={item}
+                palette={palette}
+                targetX={charTarget.x}
+                targetY={charTarget.y}
+                scale={scale}
+                frame={frame}
+                focused={isFocused}
+                bubbleText={bubbleText}
+                bubbleTone={bubbleTone}
+                onPress={() => setFocusedId(item.id)}
+              />
+            ) : null}
+          </View>
+        );
+      })}
+
+      {/* 8. In-Room Floor-Standing Pixel Big Screen Monitor (Click -> Open Detail Dock!) */}
+      {activeAgent ? (
+        <Pressable
+          onPress={() => onOpenDetail(activeAgent.id)}
+          accessibilityRole="button"
+          accessibilityLabel={`点击房内信息大屏查看 ${activeAgent.title} 详情`}
+          style={{
+            position: "absolute",
+            left: geom.bigScreenRect.x * scale,
+            top: geom.bigScreenRect.y * scale,
+            width: geom.bigScreenRect.w * scale,
+            height: geom.bigScreenRect.h * scale,
+            zIndex: 450,
+            paddingHorizontal: 6,
+            paddingVertical: 4,
+            borderRadius: 4,
+            borderWidth: 2,
+            borderColor: isDetailOpenForFocused ? theme.colors.accent : "#1f242b",
+            backgroundColor: "#141d2b",
+            justifyContent: "space-between",
+            overflow: "hidden",
+          }}
+        >
+          {/* Screen top LED bar: Agent Title + State */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <View
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 999,
+                backgroundColor:
+                  activeAgent.state === "runaway" || activeAgent.state === "failed"
+                    ? "#f87171"
+                    : activeAgent.state === "needs-input"
+                      ? "#fbbf24"
+                      : activeAgent.state === "working"
+                        ? "#4ade80"
+                        : "#94a3b8",
+              }}
+            />
+            <Text
+              numberOfLines={1}
+              style={{ color: "#f8fafc", fontSize: 9.5, fontWeight: "700", flex: 1 }}
             >
-              <Icon name="PanelRightOpen" size={11} color={theme.colors.foregroundMuted} />
-              <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>
-                {isDetailOpenForFocused ? "收起" : "详情"}
+              {activeAgent.title}
+            </Text>
+            <Text style={{ color: "#60a5fa", fontSize: 8.5, fontWeight: "600" }}>
+              {isDetailOpenForFocused ? "收起" : "详情▸"}
+            </Text>
+          </View>
+
+          {/* Latest Real Conversation Line */}
+          <Text
+            numberOfLines={2}
+            style={{ color: preview ? "#e2e8f0" : "#94a3b8", fontSize: 9, lineHeight: 12 }}
+          >
+            {preview
+              ? `${preview.role === "user" ? "我：" : ""}${preview.text}`
+              : activeAgent.state === "runaway"
+                ? `残留 ${activeAgent.processCount} 进程 (${formatMemory(activeAgent.rssKb)})`
+                : `${STATE_LABEL[activeAgent.state]} · 点击大屏查看详情`}
+          </Text>
+
+          {/* Delegation indicator inside the Big Screen */}
+          {room.delegations.length > 0 ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+              <Icon name="GitBranch" size={9} color="#93c5fd" />
+              <Text numberOfLines={1} style={{ color: "#bfdbfe", fontSize: 8.5, flex: 1 }}>
+                {room.delegations[0]!.fromTitle.slice(0, 8)} ⟶ {room.delegations[0]!.toTitle}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
+      ) : null}
+
+      {/* 9. Interactive Archive Cabinet in bottom-right corner = 归档 / 查看档案 */}
+      <Pressable
+        onPress={() => {
+          if (activeAgent?.agent && !activeAgent.agent.archivedAt) {
+            setPopover((p) => (p === "archive" ? null : "archive"));
+          } else if (room.archived.length > 0) {
+            onSelectArchive(room);
+          }
+        }}
+        accessibilityRole="button"
+        accessibilityLabel="点击档案柜归档或查看已关闭智能体"
+        style={{
+          position: "absolute",
+          left: geom.chestPos.x * scale,
+          top: geom.chestPos.y * scale,
+          zIndex: 420,
+          alignItems: "center",
+        }}
+      >
+        {room.archived.length > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              top: -10,
+              paddingHorizontal: 3.5,
+              paddingVertical: 0.5,
+              borderRadius: 2,
+              borderWidth: 1,
+              borderColor: "#1f242b",
+              backgroundColor: palette.pillBg,
+            }}
+          >
+            <Text style={{ color: theme.colors.foreground, fontSize: 8, fontWeight: "700" }}>
+              {room.archived.length}
+            </Text>
+          </View>
+        ) : null}
+        <PixelSprite
+          bitmap={ARCHIVE_CHEST}
+          colors={palette.colors}
+          paletteKey={palette.key}
+          scale={scale}
+        />
+        <PropTag text="归档" />
+      </Pressable>
+
+      {/* Flying Wax-Sealed Envelopes */}
+      {roomEnvelopes.map((env) => {
+        const from = coordsByAgent.get(env.fromId)!;
+        const to = coordsByAgent.get(env.toId)!;
+        return <FlyingEnvelope key={env.id} from={from} to={to} palette={palette} scale={scale} />;
+      })}
+
+      {/* In-Room Floating Parchment Popover for Mailbox (发消息) */}
+      {popover === "mail" && activeAgent?.agent ? (
+        <View
+          style={{
+            position: "absolute",
+            left: Math.round(24 * scale),
+            top: Math.round(34 * scale),
+            width: Math.min(roomPxW - 36, 250),
+            zIndex: 2500,
+            padding: 8,
+            borderRadius: 6,
+            borderWidth: 2,
+            borderColor: "#1f242b",
+            backgroundColor: theme.colors.surface0,
+            gap: 6,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text numberOfLines={1} style={{ color: theme.colors.foreground, fontSize: 11, fontWeight: "700", flex: 1 }}>
+              发信给：{activeAgent.title}
+            </Text>
+            <Pressable onPress={() => setPopover(null)} accessibilityLabel="关闭发信框">
+              <Icon name="X" size={13} color={theme.colors.foregroundMuted} />
+            </Pressable>
+          </View>
+          <View style={{ flexDirection: "row", gap: 5, alignItems: "center" }}>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="输入消息…"
+              placeholderTextColor={theme.colors.foregroundMuted}
+              style={{
+                flex: 1,
+                paddingHorizontal: 7,
+                paddingVertical: 4,
+                borderRadius: 5,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                color: theme.colors.foreground,
+                backgroundColor: theme.colors.surface1,
+                fontSize: 11,
+              }}
+            />
+            <Pressable
+              disabled={!draft.trim() || busy}
+              onPress={() => {
+                const id = activeAgent.id;
+                const text = draft.trim();
+                if (!text) return;
+                void runPropAction(async () => {
+                  await onSendMessage(id, text);
+                  setDraft("");
+                  setPopover(null);
+                  return "消息已投入邮筒";
+                });
+              }}
+              style={{
+                paddingHorizontal: 9,
+                paddingVertical: 5,
+                borderRadius: 5,
+                backgroundColor: theme.colors.accent,
+              }}
+            >
+              <Text style={{ color: theme.colors.accentForeground, fontSize: 11, fontWeight: "700" }}>
+                发送
               </Text>
             </Pressable>
           </View>
+        </View>
+      ) : null}
 
-          {/* Inline quick message box right inside the room */}
-          {composerOpen && activeAgent.agent ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <TextInput
-                value={draft}
-                onChangeText={setDraft}
-                placeholder={`给「${activeAgent.title}」发消息…`}
-                placeholderTextColor={theme.colors.foregroundMuted}
-                style={{
-                  flex: 1,
-                  paddingHorizontal: 8,
-                  paddingVertical: 5,
-                  borderRadius: 6,
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                  color: theme.colors.foreground,
-                  backgroundColor: theme.colors.surface0,
-                  fontSize: 12,
-                }}
-              />
-              <Pressable
-                disabled={!draft.trim() || inlineBusy !== null}
-                onPress={() => {
-                  const id = activeAgent.id;
-                  const text = draft.trim();
-                  if (!text) return;
-                  void runInline("send", async () => {
-                    await onSendMessage(id, text);
-                    setDraft("");
-                    setComposerOpen(false);
-                    return "消息已发送";
-                  });
-                }}
-                style={{
-                  paddingHorizontal: 10,
-                  paddingVertical: 6,
-                  borderRadius: 6,
-                  backgroundColor: theme.colors.accent,
-                }}
-              >
-                <Text style={{ color: theme.colors.accentForeground, fontSize: 11, fontWeight: "600" }}>
-                  {inlineBusy === "send" ? "发送中…" : "发送"}
-                </Text>
-              </Pressable>
-            </View>
+      {/* In-Room Floating Menu for Archive Cabinet (归档当前 / 查看档案) */}
+      {popover === "archive" && activeAgent?.agent ? (
+        <View
+          style={{
+            position: "absolute",
+            right: Math.round(6 * scale),
+            bottom: Math.round(24 * scale),
+            zIndex: 2500,
+            padding: 7,
+            borderRadius: 6,
+            borderWidth: 2,
+            borderColor: "#1f242b",
+            backgroundColor: theme.colors.surface0,
+            gap: 5,
+            minWidth: 132,
+          }}
+        >
+          <Pressable
+            disabled={busy}
+            onPress={() => {
+              const id = activeAgent.id;
+              void runPropAction(async () => {
+                await onArchiveAgent(id);
+                setPopover(null);
+                return "已收入档案柜";
+              });
+            }}
+            style={{
+              paddingHorizontal: 8,
+              paddingVertical: 5,
+              borderRadius: 4,
+              backgroundColor: theme.colors.surface2,
+            }}
+          >
+            <Text style={{ color: theme.colors.foreground, fontSize: 11, fontWeight: "600" }}>
+              归档当前智能体
+            </Text>
+          </Pressable>
+          {room.archived.length > 0 ? (
+            <Pressable
+              onPress={() => {
+                setPopover(null);
+                onSelectArchive(room);
+              }}
+              style={{
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                borderRadius: 4,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+              }}
+            >
+              <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>
+                查看档案箱 ({room.archived.length})
+              </Text>
+            </Pressable>
           ) : null}
+        </View>
+      ) : null}
 
-          {inlineNotice ? (
-            <Text style={{ color: theme.colors.accent, fontSize: 11 }}>{inlineNotice}</Text>
-          ) : null}
+      {/* Subtle transient in-room toast */}
+      {toastMsg ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            left: 10,
+            right: 10,
+            bottom: 6,
+            zIndex: 2600,
+            alignItems: "center",
+          }}
+        >
+          <View
+            style={{
+              paddingHorizontal: 8,
+              paddingVertical: 3,
+              borderRadius: 4,
+              borderWidth: 1,
+              borderColor: "#1f242b",
+              backgroundColor: "rgba(20, 29, 43, 0.92)",
+            }}
+          >
+            <Text style={{ color: "#f8fafc", fontSize: 10, fontWeight: "600" }}>{toastMsg}</Text>
+          </View>
         </View>
       ) : null}
     </View>
@@ -1066,7 +1109,7 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
           暂无活跃智能体或进程
         </Text>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, textAlign: "center" }}>
-          启动任意智能体后，像素工坊、信息大屏与子进程机械会出现在这里。
+          启动任意智能体后，像素工坊、房内大屏与子进程机械会出现在这里。
         </Text>
       </View>
     );
@@ -1088,10 +1131,11 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
       {rooms.map((room) => {
         const stationCount = Math.max(1, room.runaways.length + room.benches.length);
         const geom = computeRoomGeometry(stationCount, maxCols);
-        const fitScale = Math.min(2.4, Math.max(1.2, availableW / geom.width));
+        const fitScale = Math.min(2.5, Math.max(1.3, availableW / geom.width));
         const effectiveScale = Number((fitScale * zoom).toFixed(2));
+        const needsHScroll = geom.width * effectiveScale > availableW + 2;
 
-        return (
+        const roomNode = (
           <WorkshopRoomView
             key={room.workspaceId || "unassigned"}
             room={room}
@@ -1100,7 +1144,6 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
             scale={effectiveScale}
             frame={frame}
             maxCols={maxCols}
-            availableW={availableW}
             selectedId={selectedId}
             toolByAgent={toolByAgent}
             latestByAgent={latestByAgent}
@@ -1112,6 +1155,18 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
             onArchiveAgent={onArchiveAgent}
             onStopAllProcesses={onStopAllProcesses}
           />
+        );
+
+        return needsHScroll ? (
+          <ScrollView
+            key={room.workspaceId || "unassigned"}
+            horizontal
+            showsHorizontalScrollIndicator
+          >
+            {roomNode}
+          </ScrollView>
+        ) : (
+          roomNode
         );
       })}
     </ScrollView>
