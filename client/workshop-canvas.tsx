@@ -4,7 +4,7 @@
 // crisp pixel bubbles, and flying wax-sealed envelopes.
 import type { PluginTheme } from "@getpaseo/plugin";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Pressable, ScrollView, Text, View } from "react-native";
+import { Animated, Easing, Pressable, ScrollView, Text, View, type LayoutChangeEvent } from "react-native";
 import { formatCpu, formatMemory } from "../shared/format";
 import { PixelSprite } from "./pixel-sprite";
 import type { ActiveEnvelope } from "./use-feed";
@@ -31,7 +31,8 @@ export interface WorkshopCanvasProps {
   toolByAgent: ReadonlyMap<string, string>;
   envelopes: readonly ActiveEnvelope[];
   compact: boolean;
-  scale: number;
+  /** User zoom multiplier (1.0 = auto-fit to container width). */
+  zoom: number;
 }
 
 const WalkingArtisan = memo(function WalkingArtisan({
@@ -564,19 +565,26 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
   toolByAgent,
   envelopes,
   compact,
-  scale,
+  zoom,
 }: WorkshopCanvasProps) {
   const palette = useMemo(() => workshopPalette(theme), [theme]);
   const [frame, setFrame] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
     const timer = setInterval(() => setFrame((f) => (f + 1) % 4), 280);
     return () => clearInterval(timer);
   }, []);
 
+  const handleLayout = (event: LayoutChangeEvent) => {
+    const w = Math.floor(event.nativeEvent.layout.width);
+    if (w > 0 && Math.abs(w - containerWidth) > 4) setContainerWidth(w);
+  };
+
   if (rooms.length === 0) {
     return (
       <View
+        onLayout={handleLayout}
         style={{
           flex: 1,
           alignItems: "center",
@@ -602,42 +610,57 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
     );
   }
 
-  const maxCols = compact ? 2 : 4;
+  const pad = compact ? 8 : 14;
+  const availableW = containerWidth > 0 ? Math.max(220, containerWidth - pad * 2) : compact ? 290 : 720;
+  const maxCols = availableW < 420 ? 2 : availableW < 640 ? 3 : 4;
 
   return (
     <ScrollView
+      onLayout={handleLayout}
       style={{ flex: 1, backgroundColor: palette.canvasBg }}
       contentContainerStyle={{
-        padding: compact ? 8 : 14,
+        padding: pad,
+        gap: compact ? 12 : 16,
       }}
     >
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View
-          style={{
-            flexDirection: compact ? "column" : "row",
-            flexWrap: compact ? "nowrap" : "wrap",
-            alignItems: "flex-start",
-            gap: compact ? 10 : 12,
-          }}
-        >
-          {rooms.map((room) => (
-            <WorkshopRoomView
-              key={room.workspaceId || "unassigned"}
-              room={room}
-              theme={theme}
-              palette={palette}
-              scale={scale}
-              frame={frame}
-              maxCols={maxCols}
-              selectedId={selectedId}
-              toolByAgent={toolByAgent}
-              envelopes={envelopes}
-              onSelect={onSelect}
-              onSelectArchive={onSelectArchive}
-            />
-          ))}
-        </View>
-      </ScrollView>
+      {/* Always stack rooms vertically so browsing multiple workspaces is natural and intuitive */}
+      {rooms.map((room) => {
+        const stationCount = Math.max(1, room.runaways.length + room.benches.length);
+        const geom = computeRoomGeometry(stationCount, maxCols);
+        // Auto-fit scale so room fits cleanly within availableW at zoom=1, capped at 2.6 for crisp proportions
+        const fitScale = Math.min(2.6, Math.max(1.2, availableW / geom.width));
+        const effectiveScale = Number((fitScale * zoom).toFixed(2));
+        const needsHScroll = geom.width * effectiveScale > availableW + 2;
+
+        const roomNode = (
+          <WorkshopRoomView
+            key={room.workspaceId || "unassigned"}
+            room={room}
+            theme={theme}
+            palette={palette}
+            scale={effectiveScale}
+            frame={frame}
+            maxCols={maxCols}
+            selectedId={selectedId}
+            toolByAgent={toolByAgent}
+            envelopes={envelopes}
+            onSelect={onSelect}
+            onSelectArchive={onSelectArchive}
+          />
+        );
+
+        return needsHScroll ? (
+          <ScrollView
+            key={room.workspaceId || "unassigned"}
+            horizontal
+            showsHorizontalScrollIndicator
+          >
+            {roomNode}
+          </ScrollView>
+        ) : (
+          roomNode
+        );
+      })}
     </ScrollView>
   );
 });

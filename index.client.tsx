@@ -6,29 +6,52 @@ import type {
 import { contributeHeaderButtons, WORKSHOP_PANEL_ID } from "./client/header-buttons";
 import { WorkshopView } from "./client/workshop-view";
 
-function WorkshopPanel({ theme, layout, workspaceId, host, navigation }: PluginWorkspacePanelProps) {
-  return (
-    <WorkshopView
-      theme={theme}
-      compact={layout.compact}
-      initialWorkspaceId={workspaceId}
-      openAgent={navigation ? (agentId) => navigation.openAgent({ agentId, serverId: host?.id }) : undefined}
-    />
-  );
-}
-
-function WorkshopScreen({ theme, layout, host, navigation }: PluginScreenProps) {
-  return (
-    <WorkshopView
-      theme={theme}
-      compact={layout.compact}
-      initialWorkspaceId={null}
-      openAgent={navigation ? (agentId) => navigation.openAgent({ agentId, serverId: host?.id }) : undefined}
-    />
-  );
-}
-
 export default function contribute(client: PluginClientContext) {
+  function WorkshopPanel({ theme, layout, workspaceId, host, navigation }: PluginWorkspacePanelProps) {
+    return (
+      <WorkshopView
+        theme={theme}
+        compact={layout.compact}
+        hostId={host.id}
+        hostLabel={host.label}
+        initialWorkspaceId={workspaceId}
+        onOpenFullScreen={() => client.openScreen({ screenId: WORKSHOP_PANEL_ID })}
+        openAgent={
+          navigation
+            ? (agentId, serverId) =>
+                navigation.openAgent({
+                  agentId,
+                  serverId: serverId ?? host.id,
+                  focusHost: Boolean(serverId && serverId !== host.id),
+                })
+            : undefined
+        }
+      />
+    );
+  }
+
+  function WorkshopScreen({ theme, layout, host, navigation }: PluginScreenProps) {
+    return (
+      <WorkshopView
+        theme={theme}
+        compact={layout.compact}
+        hostId={host.id}
+        hostLabel={host.label}
+        initialWorkspaceId={null}
+        openAgent={
+          navigation
+            ? (agentId, serverId) =>
+                navigation.openAgent({
+                  agentId,
+                  serverId: serverId ?? host.id,
+                  focusHost: Boolean(serverId && serverId !== host.id),
+                })
+            : undefined
+        }
+      />
+    );
+  }
+
   const disposers = [
     client.addWorkspacePanel({
       id: WORKSHOP_PANEL_ID,
@@ -55,9 +78,9 @@ export default function contribute(client: PluginClientContext) {
     }),
     client.addCommandCenterItem({
       id: "open-workshop-all",
-      title: "Open Agent Workshop (All Workspaces)",
+      title: "Open Agent Workshop (Full Screen)",
       icon: "Hammer",
-      keywords: ["workshop", "lobby", "processes", "agents", "orphan", "kill"],
+      keywords: ["workshop", "lobby", "processes", "agents", "orphan", "kill", "fullscreen"],
       context: "global",
       onSelect({ openScreen }) {
         openScreen({ screenId: WORKSHOP_PANEL_ID });

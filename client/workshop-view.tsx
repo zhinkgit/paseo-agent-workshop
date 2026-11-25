@@ -1,9 +1,10 @@
-// Clean, airy, Lobby-inspired header & layout on a pure white/host background.
+// Clean, airy, Lobby-inspired header & layout on a pure white/host background,
+// with multi-host switcher (useHosts + getPaseoClient), 1-click Full-Screen button, and vertical room layout.
 import type { PluginTheme } from "@getpaseo/plugin";
-import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { getPaseoClient, useHosts, usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import {
   listProcesses,
@@ -12,8 +13,10 @@ import {
   stopProcess,
   updateSettings,
   type ProcessRowView,
+  type StopResult,
 } from "../shared/contracts";
 import { formatCpu, formatMemory } from "../shared/format";
+import type { PaseoApi } from "./paseo-types";
 import { useDirectory } from "./use-directory";
 import { useWorkshopFeed } from "./use-feed";
 import { type WorkshopState } from "./workshop-art";
@@ -25,8 +28,12 @@ import { buildWorkshopRooms, STATE_ORDER, type WorkshopRoom } from "./workshop-m
 export interface WorkshopViewProps {
   theme: PluginTheme;
   compact: boolean;
+  hostId: string;
+  hostLabel: string;
   initialWorkspaceId?: string | null;
-  openAgent?: (agentId: string) => void;
+  /** When opened inside an Explorer/Workspace panel, opens the Full-Screen Workshop screen. */
+  onOpenFullScreen?: () => void;
+  openAgent?: (agentId: string, serverId?: string) => void;
 }
 
 const FILTER_LABEL: Record<WorkshopState, string> = {
@@ -39,44 +46,97 @@ const FILTER_LABEL: Record<WorkshopState, string> = {
   closed: "Closed",
 };
 
+type RemoteRpcCapable = {
+  invokePluginRpc?: (pluginId: string, method: string, input: unknown) => Promise<unknown>;
+};
+
 export function WorkshopView({
   theme,
   compact,
+  hostId,
+  hostLabel,
   initialWorkspaceId = null,
+  onOpenFullScreen,
   openAgent,
 }: WorkshopViewProps) {
-  const paseo = usePaseo();
+  const localPaseo = usePaseo();
+  const configuredHosts = useHosts();
   const queryClient = useQueryClient();
 
-  const fetchProcesses = useRpc(listProcesses);
-  const runStopProcess = useRpc(stopProcess);
-  const runStopAgent = useRpc(stopAgentProcesses);
-  const runOptimizeProcess = useRpc(optimizeProcess);
-  const runUpdateSettings = useRpc(updateSettings);
+  const localFetchProcesses = useRpc(listProcesses);
+  const localStopProcess = useRpc(stopProcess);
+  const localStopAgent = useRpc(stopAgentProcesses);
+  const localOptimizeProcess = useRpc(optimizeProcess);
+  const localUpdateSettings = useRpc(updateSettings);
 
+  const [activeHostId, setActiveHostId] = useState(hostId);
   const [scopeAll, setScopeAll] = useState(initialWorkspaceId === null);
   const [viewMode, setViewMode] = useState<"workshop" | "list">("workshop");
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState<WorkshopState | "all">("all");
-  const [scale, setScale] = useState(compact ? 1.8 : 2.2);
+  const [zoom, setZoom] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [archiveRoomId, setArchiveRoomId] = useState<string | null>(null);
 
-  const activeScopeId = scopeAll ? null : initialWorkspaceId;
+  // Follow host prop if the screen-level host picker changes it.
+  useEffect(() => {
+    setActiveHostId(hostId);
+  }, [hostId]);
 
-  const directory = useDirectory(paseo);
-  const feed = useWorkshopFeed(paseo, directory.agents);
+  // Clear selection when switching hosts.
+  useEffect(() => {
+    setSelectedId(null);
+    setArchiveRoomId(null);
+  }, [activeHostId]);
+
+  const isLocalHost = activeHostId === hostId;
+
+  const activePaseo: PaseoApi = useMemo(() => {
+    if (isLocalHost) return localPaseo;
+    try {
+      return getPaseoClient(activeHostId) as unknown as PaseoApi;
+    } catch {
+      return localPaseo;
+    }
+  }, [isLocalHost, activeHostId, localPaseo]);
+
+  // Invoke plugin RPC on whichever host is currently selected.
+  const callHostRpc = async <TOut,>(
+    method: string,
+    input: unknown,
+    localFallback: () => Promise<TOut>,
+  ): Promise<TOut> => {
+    if (isLocalHost) return localFallback();
+    const remote = activePaseo as unknown as RemoteRpcCapable;
+    if (typeof remote.invokePluginRpc === "function") {
+      return (await remote.invokePluginRpc("agent-workshop", method, input)) as TOut;
+    }
+    throw new Error("当前客户端暂不支持在面板内直连远程主机进程 RPC，请点击右上角「全图」后在顶栏切换主机。");
+  };
+
+  // Scope to initialWorkspaceId only when viewing the local host with "This workspace" active.
+  const activeScopeId = !isLocalHost || scopeAll ? null : initialWorkspaceId;
+
+  const directory = useDirectory(activePaseo);
+  const feed = useWorkshopFeed(activePaseo, directory.agents);
 
   const procQuery = useQuery({
-    queryKey: ["agent-workshop", "processes", activeScopeId ?? "all"],
-    queryFn: () => fetchProcesses(activeScopeId ? { workspaceId: activeScopeId } : {}),
+    queryKey: ["agent-workshop", "processes", activeHostId, activeScopeId ?? "all"],
+    queryFn: () => {
+      const payload = activeScopeId ? { workspaceId: activeScopeId } : {};
+      return callHostRpc("processes.list", payload, () => localFetchProcesses(payload));
+    },
     refetchInterval: 3_000,
+    retry: false,
   });
 
   const toggleSweepMutation = useMutation({
-    mutationFn: (enabled: boolean) => runUpdateSettings({ autoSweepEnabled: enabled }),
+    mutationFn: (enabled: boolean) =>
+      callHostRpc("settings.set", { autoSweepEnabled: enabled }, () =>
+        localUpdateSettings({ autoSweepEnabled: enabled }),
+      ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["agent-workshop", "processes"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-workshop", "processes", activeHostId] });
     },
   });
 
@@ -93,7 +153,6 @@ export function WorkshopView({
     [directory.agents, directory.workspaces, procQuery.data?.agents, activeScopeId, query, stateFilter],
   );
 
-  // Count per state for the clean dot filter chips
   const counts = useMemo(() => {
     const map: Record<WorkshopState, number> = {
       "needs-input": 0,
@@ -162,24 +221,34 @@ export function WorkshopView({
     }
   };
 
-  const handleStopProcess = async (row: ProcessRowView) => {
-    const res = await runStopProcess({ pid: row.pid, started: row.started });
+  const handleStopProcess = async (row: ProcessRowView): Promise<StopResult> => {
+    const payload = { pid: row.pid, started: row.started };
+    const res = await callHostRpc("processes.stop", payload, () => localStopProcess(payload));
     await procQuery.refetch();
     scheduleFollowupRefetch(res.stillRunning);
     return res;
   };
 
-  const handleStopAll = async (agentId: string) => {
-    const res = await runStopAgent({ agentId });
+  const handleStopAll = async (agentId: string): Promise<StopResult> => {
+    const payload = { agentId };
+    const res = await callHostRpc("processes.stop_agent", payload, () => localStopAgent(payload));
     await procQuery.refetch();
     scheduleFollowupRefetch(res.stillRunning);
     return res;
   };
 
   const handleOptimize = async (row: ProcessRowView) => {
-    const res = await runOptimizeProcess({ pid: row.pid, started: row.started });
-    openAgent?.(res.agentId);
+    const payload = { pid: row.pid, started: row.started };
+    const res = await callHostRpc<{ agentId: string }>("processes.optimize", payload, () =>
+      localOptimizeProcess(payload),
+    );
+    openAgent?.(res.agentId, activeHostId);
   };
+
+  const hostOptions = useMemo(() => {
+    if (configuredHosts.length > 0) return configuredHosts;
+    return [{ serverId: hostId, label: hostLabel, status: "online" as const }];
+  }, [configuredHosts, hostId, hostLabel]);
 
   const summaryParts = [`${baseData.allItems.length} agents`];
   if (counts.runaway > 0) summaryParts.push(`${counts.runaway} runaway`);
@@ -188,23 +257,25 @@ export function WorkshopView({
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
-      {/* Airy Lobby-style pure white/surface0 header */}
+      {/* Airy pure white/surface0 header */}
       <View
         style={{
           paddingHorizontal: compact ? 10 : 14,
           paddingTop: 10,
           paddingBottom: 8,
-          gap: 8,
+          gap: 7,
           backgroundColor: theme.colors.surface0,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.border,
         }}
       >
-        {/* Row 1: Summary on left, Workshop/List segmented pills + Refresh on right */}
+        {/* Row 1: Summary on left, Workshop/List + Full-Screen + Refresh on right */}
         <View
           style={{
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 8,
+            gap: 6,
           }}
         >
           <Text
@@ -222,7 +293,7 @@ export function WorkshopView({
             <Pressable
               onPress={() => setViewMode("workshop")}
               style={{
-                paddingHorizontal: 10,
+                paddingHorizontal: 9,
                 paddingVertical: 4,
                 borderRadius: 999,
                 backgroundColor: viewMode === "workshop" ? theme.colors.surface2 : "transparent",
@@ -242,7 +313,7 @@ export function WorkshopView({
             <Pressable
               onPress={() => setViewMode("list")}
               style={{
-                paddingHorizontal: 10,
+                paddingHorizontal: 9,
                 paddingVertical: 4,
                 borderRadius: 999,
                 backgroundColor: viewMode === "list" ? theme.colors.surface2 : "transparent",
@@ -258,18 +329,96 @@ export function WorkshopView({
                 List
               </Text>
             </Pressable>
+
+            {/* 1-click Full-Screen mode button when opened inside the Explorer panel */}
+            {onOpenFullScreen ? (
+              <Pressable
+                onPress={onOpenFullScreen}
+                accessibilityRole="button"
+                accessibilityLabel="Open Full-Screen Workshop"
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 3,
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  marginLeft: 2,
+                }}
+              >
+                <Icon name="Maximize2" size={12} color={theme.colors.foreground} />
+                <Text style={{ color: theme.colors.foreground, fontSize: 11, fontWeight: "600" }}>
+                  全图
+                </Text>
+              </Pressable>
+            ) : null}
+
             <Pressable
               onPress={() => {
                 directory.reload();
                 void procQuery.refetch();
               }}
               accessibilityLabel="Refresh"
-              style={{ padding: 5, marginLeft: 2 }}
+              style={{ padding: 5 }}
             >
               <Icon name="RefreshCw" size={14} color={theme.colors.foregroundMuted} />
             </Pressable>
           </View>
         </View>
+
+        {/* Multi-host switcher bar (shown whenever > 1 host is configured) */}
+        {hostOptions.length > 1 ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
+            <Icon name="Server" size={12} color={theme.colors.foregroundMuted} />
+            {hostOptions.map((h) => {
+              const active = h.serverId === activeHostId;
+              const online = h.status === "online";
+              return (
+                <Pressable
+                  key={h.serverId}
+                  disabled={!online}
+                  onPress={() => setActiveHostId(h.serverId)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Switch host to ${h.label}`}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 5,
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: active ? theme.colors.accent : theme.colors.border,
+                    backgroundColor: active ? theme.colors.surface2 : "transparent",
+                    opacity: online ? 1 : 0.45,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 999,
+                      backgroundColor: online
+                        ? theme.colors.statusSuccess
+                        : theme.colors.foregroundMuted,
+                    }}
+                  />
+                  <Text
+                    style={{
+                      color: active ? theme.colors.foreground : theme.colors.foregroundMuted,
+                      fontSize: 11,
+                      fontWeight: active ? "600" : "400",
+                    }}
+                  >
+                    {h.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
 
         {/* Row 2: Clean rounded search input + Zoom icons */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -309,14 +458,14 @@ export function WorkshopView({
           {viewMode === "workshop" ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
               <Pressable
-                onPress={() => setScale((s) => Math.max(1.2, Number((s - 0.3).toFixed(1))))}
+                onPress={() => setZoom((z) => Math.max(0.7, Number((z - 0.15).toFixed(2))))}
                 accessibilityLabel="Zoom out"
                 style={{ padding: 6 }}
               >
                 <Icon name="ZoomOut" size={15} color={theme.colors.foregroundMuted} />
               </Pressable>
               <Pressable
-                onPress={() => setScale((s) => Math.min(3.4, Number((s + 0.3).toFixed(1))))}
+                onPress={() => setZoom((z) => Math.min(1.8, Number((z + 0.15).toFixed(2))))}
                 accessibilityLabel="Zoom in"
                 style={{ padding: 6 }}
               >
@@ -326,9 +475,9 @@ export function WorkshopView({
           ) : null}
         </View>
 
-        {/* Row 3: Scope pills (if inside workspace panel) + clean dot filter chips + Auto-clean pill */}
+        {/* Row 3: Scope pills + clean dot filter chips + Auto-clean pill */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-          {initialWorkspaceId ? (
+          {initialWorkspaceId && isLocalHost ? (
             <>
               <Pressable
                 onPress={() => setScopeAll(false)}
@@ -464,7 +613,7 @@ export function WorkshopView({
         ) : null}
       </View>
 
-      {/* Main split body: Clean White Workshop Canvas / List + Dual-Tab Dock */}
+      {/* Main split body: Vertical Workshop Canvas / List + Dual-Tab Dock */}
       <View style={{ flex: 1, flexDirection: compact ? "column" : "row" }}>
         <View style={{ flex: 1 }}>
           {viewMode === "workshop" ? (
@@ -483,7 +632,7 @@ export function WorkshopView({
               toolByAgent={feed.toolByAgent}
               envelopes={feed.envelopes}
               compact={compact}
-              scale={scale}
+              zoom={zoom}
             />
           ) : (
             <WorkshopList
@@ -501,7 +650,7 @@ export function WorkshopView({
 
         <WorkshopDock
           theme={theme}
-          paseo={paseo}
+          paseo={activePaseo}
           selected={selected}
           archiveRoom={archiveRoom}
           onSelectAgent={(id) => {
@@ -512,7 +661,7 @@ export function WorkshopView({
             setSelectedId(null);
             setArchiveRoomId(null);
           }}
-          onOpenAgent={openAgent}
+          onOpenAgent={openAgent ? (agentId) => openAgent(agentId, activeHostId) : undefined}
           onStopProcess={handleStopProcess}
           onStopAllProcesses={handleStopAll}
           onOptimizeProcess={handleOptimize}
