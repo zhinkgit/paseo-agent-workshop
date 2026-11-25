@@ -575,12 +575,17 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
         </Pressable>
       ) : null}
 
-      {/* 5. Interactive Power Breaker Switch in left aisle = 停进程 */}
+      {/* 5. Interactive Power Breaker Switch in left aisle = 停进程 (always clickable with instant feedback!) */}
       {activeAgent ? (
         <Pressable
-          disabled={busy || activeAgent.processCount === 0}
+          disabled={busy}
           onPress={() => {
+            if (activeAgent.processCount === 0) {
+              setToastMsg(`「${activeAgent.title}」当前无运行中进程`);
+              return;
+            }
             const id = activeAgent.id;
+            setToastMsg(`正在拉闸停止「${activeAgent.title}」的 ${activeAgent.processCount} 个进程…`);
             void runPropAction(async () => {
               const res = await onStopAllProcesses(id);
               if (res.failed > 0) return `停止失败：${res.error ?? "权限不足"}`;
@@ -591,14 +596,14 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
           }}
           accessibilityRole="button"
           accessibilityLabel={`点击电闸停止 ${activeAgent.title} 的进程`}
-          style={{
+          style={({ pressed }) => ({
             position: "absolute",
             left: geom.breakerPos.x * scale,
             top: geom.breakerPos.y * scale,
-            zIndex: 360,
+            zIndex: 390,
             alignItems: "center",
-            opacity: activeAgent.processCount > 0 ? 1 : 0.45,
-          }}
+            opacity: pressed ? 0.65 : activeAgent.processCount > 0 ? 1 : 0.65,
+          })}
         >
           <PixelSprite
             bitmap={breakerSprite(activeAgent.machineLoad, frame)}
