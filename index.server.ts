@@ -27,6 +27,7 @@ import {
   stopProcess,
   updateSettings,
   type ProcessIdentity,
+  type StopResult,
   type WorkshopSettings,
 } from "./shared/contracts";
 import { splitCommand } from "./shared/format";
@@ -57,12 +58,6 @@ export default function contribute(server: PluginServerContext) {
     if (!lifetime.signal.aborted) console.error(error);
   };
 
-  const stop = async (targets: readonly ProcessIdentity[]) => {
-    const signalled = await terminate(targets);
-    killSurvivors(signalled, lifetime.signal).catch(report);
-    return signalled.length;
-  };
-
   let attribution: Attribution = NO_ATTRIBUTION;
   let reading: Promise<ProcessRow[]> | undefined;
   const read = () => {
@@ -76,6 +71,24 @@ export default function contribute(server: PluginServerContext) {
         reading = undefined;
       });
     return reading;
+  };
+
+  const stop = async (
+    targets: readonly ProcessIdentity[],
+    rescan?: () => Promise<ProcessIdentity[]>,
+  ): Promise<StopResult> => {
+    const outcome = await terminate(targets);
+    if (outcome.stillRunning.length > 0) {
+      killSurvivors(outcome.stillRunning, lifetime.signal, rescan).catch(report);
+    }
+    const firstErr = outcome.failed[0]?.error;
+    return {
+      signalled: outcome.signalled.length,
+      stopped: outcome.stopped.length,
+      stillRunning: outcome.stillRunning.length,
+      failed: outcome.failed.length,
+      ...(firstErr ? { error: firstErr } : {}),
+    };
   };
 
   const agentProcess = (rows: readonly ProcessRow[], { pid, started }: ProcessIdentity) => {
@@ -110,17 +123,27 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(stopProcess, async (identity) => {
     const rows = await read();
-    const targets = subtree(rows, agentProcess(rows, identity));
+    const root = agentProcess(rows, identity);
+    const targets = subtree(rows, root);
     console.log(`stopping process ${identity.pid} and ${targets.length - 1} descendants`);
-    return { signalled: await stop(targets) };
+    return stop(targets, async () => {
+      const latest = await read();
+      const sameRoot = latest.find((r) => r.pid === identity.pid && r.started === identity.started);
+      return sameRoot ? subtree(latest, sameRoot) : [];
+    });
   });
 
   server.handle(stopAgentProcesses, async ({ agentId }) => {
     const rows = await read();
     const own = rows.filter((row) => row.agentId === agentId);
-    if (own.length === 0) return { signalled: 0 };
+    if (own.length === 0) {
+      return { signalled: 0, stopped: 0, stillRunning: 0, failed: 0 };
+    }
     console.log(`stopping all ${own.length} processes of agent ${agentId}`);
-    return { signalled: await stop(own) };
+    return stop(own, async () => {
+      const latest = await read();
+      return latest.filter((row) => row.agentId === agentId);
+    });
   });
 
   server.handle(optimizeProcess, async (identity, { paseo }) => {
@@ -157,7 +180,8 @@ export default function contribute(server: PluginServerContext) {
     const current = await ensureSettings();
     if (!current.autoSweepEnabled) return;
     const rows = await read();
-    const daemonGroup = process.platform === "win32" ? 0 : (rows.find((row) => row.pid === daemonPid)?.pgid ?? 0);
+    const daemonGroup =
+      process.platform === "win32" ? 0 : (rows.find((row) => row.pid === daemonPid)?.pgid ?? 0);
     if (process.platform !== "win32" && daemonGroup === 0) {
       throw new Error(`daemon ${daemonPid} is missing from the process table`);
     }

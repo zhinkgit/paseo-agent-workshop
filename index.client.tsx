@@ -6,24 +6,24 @@ import type {
 import { contributeHeaderButtons, WORKSHOP_PANEL_ID } from "./client/header-buttons";
 import { WorkshopView } from "./client/workshop-view";
 
-function WorkshopPanel({ theme, layout, workspaceId, navigation }: PluginWorkspacePanelProps) {
+function WorkshopPanel({ theme, layout, workspaceId, host, navigation }: PluginWorkspacePanelProps) {
   return (
     <WorkshopView
       theme={theme}
       compact={layout.compact}
       initialWorkspaceId={workspaceId}
-      openAgent={navigation ? (agentId) => navigation.openAgent({ agentId }) : undefined}
+      openAgent={navigation ? (agentId) => navigation.openAgent({ agentId, serverId: host?.id }) : undefined}
     />
   );
 }
 
-function WorkshopScreen({ theme, layout, navigation }: PluginScreenProps) {
+function WorkshopScreen({ theme, layout, host, navigation }: PluginScreenProps) {
   return (
     <WorkshopView
       theme={theme}
       compact={layout.compact}
       initialWorkspaceId={null}
-      openAgent={navigation ? (agentId) => navigation.openAgent({ agentId }) : undefined}
+      openAgent={navigation ? (agentId) => navigation.openAgent({ agentId, serverId: host?.id }) : undefined}
     />
   );
 }

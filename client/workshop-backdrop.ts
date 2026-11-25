@@ -8,6 +8,7 @@ export interface RoomGeometry {
   height: number;
   cols: number;
   rows: number;
+  loungeCapacity: number;
   stationOrigin: (index: number) => { x: number; y: number };
   chestPos: { x: number; y: number };
   loungeSpot: (index: number) => { x: number; y: number };
@@ -29,11 +30,14 @@ export function computeRoomGeometry(stationCount: number, maxCols: number): Room
   const width = BORDER * 2 + WALKWAY_W + workW;
   const height = BORDER + WALL_H + rows * STATION_H + LOUNGE_H + BORDER;
 
+  const loungeCapacity = Math.max(1, Math.floor((workW - 28) / 18));
+
   return {
     width,
     height,
     cols,
     rows,
+    loungeCapacity,
     stationOrigin(index: number) {
       const col = index % cols;
       const row = Math.floor(index / cols);
@@ -49,8 +53,7 @@ export function computeRoomGeometry(stationCount: number, maxCols: number): Room
     loungeSpot(index: number) {
       const startX = BORDER + WALKWAY_W + 10;
       const spacing = 18;
-      const maxSpots = Math.max(1, Math.floor((workW - 28) / spacing));
-      const slot = index % maxSpots;
+      const slot = index % loungeCapacity;
       return {
         x: startX + slot * spacing,
         y: height - BORDER - 20,

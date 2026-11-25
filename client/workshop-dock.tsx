@@ -2,9 +2,9 @@
 // recent chat tail, and full process tree Stop / Optimize actions.
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import type { ProcessRowView } from "../shared/contracts";
+import type { ProcessRowView, StopResult } from "../shared/contracts";
 import { formatCpu, formatElapsed, formatMemory, shortenMiddle, splitCommand } from "../shared/format";
 import type { PaseoApi } from "./paseo-types";
 import { PixelSprite } from "./pixel-sprite";
@@ -20,13 +20,26 @@ export interface WorkshopDockProps {
   onSelectAgent: (agentId: string) => void;
   onClose: () => void;
   onOpenAgent?: (agentId: string) => void;
-  onStopProcess: (row: ProcessRowView) => Promise<void>;
-  onStopAllProcesses: (agentId: string) => Promise<void>;
+  onStopProcess: (row: ProcessRowView) => Promise<StopResult>;
+  onStopAllProcesses: (agentId: string) => Promise<StopResult>;
   onOptimizeProcess: (row: ProcessRowView) => Promise<void>;
   compact: boolean;
 }
 
 type DockTab = "activity" | "processes";
+
+function formatStopMessage(res: StopResult, label: string): string {
+  if (res.failed > 0) {
+    return `${label}失败：${res.error ?? "权限不足或进程拒绝终止"}`;
+  }
+  if (res.signalled === 0 && res.stopped === 0) {
+    return `${label}：进程已退出或未找到目标`;
+  }
+  if (res.stillRunning > 0) {
+    return `已向 ${label} 发送停止信号（${res.stillRunning} 个仍在退出，超时后强制终止）`;
+  }
+  return `已停止 ${res.stopped} 个进程`;
+}
 
 export function WorkshopDock({
   theme,
@@ -45,9 +58,19 @@ export function WorkshopDock({
   const [tab, setTab] = useState<DockTab>("activity");
   const [draft, setDraft] = useState("");
   const [showComposer, setShowComposer] = useState(false);
-  const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [notice, setNotice] = useState<{ text: string; isError?: boolean } | null>(null);
   const [chatRefresh, setChatRefresh] = useState(0);
+
+  const selectedIdRef = useRef<string | null>(selected?.id ?? null);
+  selectedIdRef.current = selected?.id ?? null;
+
+  // Bind draft, composer visibility, and notice strictly to the active selected agent.
+  useEffect(() => {
+    setDraft("");
+    setShowComposer(false);
+    setNotice(null);
+  }, [selected?.id]);
 
   const activeTab: DockTab =
     selected?.state === "runaway" && !selected.agent ? "processes" : tab;
@@ -58,16 +81,33 @@ export function WorkshopDock({
     chatRefresh,
   );
 
-  const runAction = async (key: string, okMsg: string, fn: () => Promise<void>) => {
-    setBusyKey(key);
-    setNotice(null);
+  const isBusy = (key: string) => busyKeys.has(key);
+
+  const runAction = async (
+    key: string,
+    originAgentId: string,
+    fn: () => Promise<{ text: string; isError?: boolean }>,
+  ) => {
+    setBusyKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+    if (selectedIdRef.current === originAgentId) setNotice(null);
     try {
-      await fn();
-      setNotice(okMsg);
+      const result = await fn();
+      if (selectedIdRef.current === originAgentId) setNotice(result);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : String(err));
+      if (selectedIdRef.current === originAgentId) {
+        setNotice({ text: err instanceof Error ? err.message : String(err), isError: true });
+      }
     } finally {
-      setBusyKey(null);
+      setBusyKeys((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   };
 
@@ -228,27 +268,36 @@ export function WorkshopDock({
 
           {selected.agent && !selected.agent.archivedAt ? (
             <Pressable
-              disabled={busyKey !== null}
-              onPress={() =>
-                void runAction("archive", "已归档", async () => {
-                  await paseo.agents.ref(selected.id).archive();
-                })
-              }
+              disabled={isBusy(`archive-${selected.id}`)}
+              onPress={() => {
+                const targetId = selected.id;
+                void runAction(`archive-${targetId}`, targetId, async () => {
+                  await paseo.agents.ref(targetId).archive();
+                  return { text: "已归档" };
+                });
+              }}
               style={actionBtn}
             >
               <Icon name="Archive" size={12} color={theme.colors.foregroundMuted} />
               <Text style={{ color: theme.colors.foreground, fontSize: 11, fontWeight: "500" }}>
-                归档
+                {isBusy(`archive-${selected.id}`) ? "归档中…" : "归档"}
               </Text>
             </Pressable>
           ) : null}
 
           {selected.processCount > 0 ? (
             <Pressable
-              disabled={busyKey !== null}
-              onPress={() =>
-                void runAction("stop-all", "已发送停止信号", () => onStopAllProcesses(selected.id))
-              }
+              disabled={isBusy(`stop-all-${selected.id}`)}
+              onPress={() => {
+                const targetId = selected.id;
+                void runAction(`stop-all-${targetId}`, targetId, async () => {
+                  const res = await onStopAllProcesses(targetId);
+                  return {
+                    text: formatStopMessage(res, "全部进程"),
+                    isError: res.failed > 0,
+                  };
+                });
+              }}
               style={
                 selected.state === "runaway"
                   ? {
@@ -275,7 +324,7 @@ export function WorkshopDock({
                   fontWeight: "600",
                 }}
               >
-                全停 ({selected.processCount})
+                {isBusy(`stop-all-${selected.id}`) ? "停止中…" : `全停 (${selected.processCount})`}
               </Text>
             </Pressable>
           ) : null}
@@ -301,15 +350,19 @@ export function WorkshopDock({
               }}
             />
             <Pressable
-              disabled={!draft.trim() || busyKey !== null}
+              disabled={!draft.trim() || isBusy(`send-${selected.id}`)}
               onPress={() => {
+                const targetId = selected.id;
                 const msg = draft.trim();
                 if (!msg) return;
-                void runAction("send", "消息已发送", async () => {
-                  await paseo.agents.ref(selected.id).send(msg);
-                  setDraft("");
-                  setShowComposer(false);
-                  setChatRefresh((n) => n + 1);
+                void runAction(`send-${targetId}`, targetId, async () => {
+                  await paseo.agents.ref(targetId).send(msg);
+                  if (selectedIdRef.current === targetId) {
+                    setDraft("");
+                    setShowComposer(false);
+                    setChatRefresh((n) => n + 1);
+                  }
+                  return { text: "消息已发送" };
                 });
               }}
               style={{
@@ -320,14 +373,21 @@ export function WorkshopDock({
               }}
             >
               <Text style={{ color: theme.colors.accentForeground, fontSize: 11, fontWeight: "600" }}>
-                发送
+                {isBusy(`send-${selected.id}`) ? "发送中…" : "发送"}
               </Text>
             </Pressable>
           </View>
         ) : null}
 
         {notice ? (
-          <Text style={{ color: theme.colors.accent, fontSize: 11 }}>{notice}</Text>
+          <Text
+            style={{
+              color: notice.isError ? theme.colors.statusDanger : theme.colors.accent,
+              fontSize: 11,
+            }}
+          >
+            {notice.text}
+          </Text>
         ) : null}
       </View>
 
@@ -426,15 +486,17 @@ export function WorkshopDock({
                 ) : null}
                 <View style={{ flexDirection: "row", gap: 6 }}>
                   <Pressable
-                    disabled={busyKey !== null}
-                    onPress={() =>
-                      void runAction(`allow-${perm.id}`, "已允许", async () => {
-                        await paseo.agents.ref(selected.id).respondToPermission({
+                    disabled={isBusy(`perm-${perm.id}`)}
+                    onPress={() => {
+                      const targetId = selected.id;
+                      void runAction(`perm-${perm.id}`, targetId, async () => {
+                        await paseo.agents.ref(targetId).respondToPermission({
                           requestId: perm.id,
                           response: { behavior: "allow" },
                         });
-                      })
-                    }
+                        return { text: "已允许" };
+                      });
+                    }}
                     style={{
                       paddingHorizontal: 10,
                       paddingVertical: 4,
@@ -445,15 +507,17 @@ export function WorkshopDock({
                     <Text style={{ color: "#ffffff", fontSize: 11, fontWeight: "700" }}>Allow</Text>
                   </Pressable>
                   <Pressable
-                    disabled={busyKey !== null}
-                    onPress={() =>
-                      void runAction(`deny-${perm.id}`, "已拒绝", async () => {
-                        await paseo.agents.ref(selected.id).respondToPermission({
+                    disabled={isBusy(`perm-${perm.id}`)}
+                    onPress={() => {
+                      const targetId = selected.id;
+                      void runAction(`perm-${perm.id}`, targetId, async () => {
+                        await paseo.agents.ref(targetId).respondToPermission({
                           requestId: perm.id,
                           response: { behavior: "deny", message: "Denied from Agent Workshop" },
                         });
-                      })
-                    }
+                        return { text: "已拒绝" };
+                      });
+                    }}
                     style={{
                       paddingHorizontal: 10,
                       paddingVertical: 4,
@@ -599,31 +663,34 @@ export function WorkshopDock({
                       <View style={{ flexDirection: "row", gap: 6 }}>
                         {selected.agent ? (
                           <Pressable
-                            disabled={busyKey !== null}
-                            onPress={() =>
-                              void runAction(
-                                `opt-${row.pid}`,
-                                "已派发优化 Agent",
-                                () => onOptimizeProcess(row),
-                              )
-                            }
+                            disabled={isBusy(`opt-${row.pid}@${row.started}`)}
+                            onPress={() => {
+                              const targetId = selected.id;
+                              void runAction(`opt-${row.pid}@${row.started}`, targetId, async () => {
+                                await onOptimizeProcess(row);
+                                return { text: "已派发优化 Agent" };
+                              });
+                            }}
                             style={actionBtn}
                           >
                             <Icon name="Sparkles" size={11} color={theme.colors.accent} />
                             <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>
-                              Optimize
+                              {isBusy(`opt-${row.pid}@${row.started}`) ? "派发中…" : "Optimize"}
                             </Text>
                           </Pressable>
                         ) : null}
                         <Pressable
-                          disabled={busyKey !== null}
-                          onPress={() =>
-                            void runAction(
-                              `stop-${row.pid}`,
-                              `已停止 PID ${row.pid}`,
-                              () => onStopProcess(row),
-                            )
-                          }
+                          disabled={isBusy(`stop-${row.pid}@${row.started}`)}
+                          onPress={() => {
+                            const targetId = selected.id;
+                            void runAction(`stop-${row.pid}@${row.started}`, targetId, async () => {
+                              const res = await onStopProcess(row);
+                              return {
+                                text: formatStopMessage(res, `PID ${row.pid}`),
+                                isError: res.failed > 0,
+                              };
+                            });
+                          }}
                           style={{
                             flexDirection: "row",
                             alignItems: "center",
@@ -636,7 +703,7 @@ export function WorkshopDock({
                         >
                           <Icon name="Square" size={10} color="#ffffff" />
                           <Text style={{ color: "#ffffff", fontSize: 11, fontWeight: "600" }}>
-                            Stop
+                            {isBusy(`stop-${row.pid}@${row.started}`) ? "停止中…" : "Stop"}
                           </Text>
                         </Pressable>
                       </View>

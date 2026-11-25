@@ -28,6 +28,14 @@ export const agentTreeSchema = z.object({
   rows: z.array(processRowSchema),
 });
 
+export const stopResultSchema = z.object({
+  signalled: z.number(),
+  stopped: z.number(),
+  stillRunning: z.number(),
+  failed: z.number(),
+  error: z.string().optional(),
+});
+
 export const workshopSettingsSchema = z.object({
   autoSweepEnabled: z.boolean(),
 });
@@ -35,6 +43,7 @@ export const workshopSettingsSchema = z.object({
 export type ProcessRowView = z.infer<typeof processRowSchema>;
 export type ProcessIdentity = z.infer<typeof processIdentitySchema>;
 export type AgentTreeView = z.infer<typeof agentTreeSchema>;
+export type StopResult = z.infer<typeof stopResultSchema>;
 export type WorkshopSettings = z.infer<typeof workshopSettingsSchema>;
 
 export const listProcesses = defineRpc({
@@ -50,13 +59,13 @@ export const listProcesses = defineRpc({
 export const stopProcess = defineRpc({
   name: "processes.stop",
   input: processIdentitySchema,
-  output: z.object({ signalled: z.number() }),
+  output: stopResultSchema,
 });
 
 export const stopAgentProcesses = defineRpc({
   name: "processes.stop_agent",
   input: z.object({ agentId: z.string().min(1) }),
-  output: z.object({ signalled: z.number() }),
+  output: stopResultSchema,
 });
 
 export const optimizeProcess = defineRpc({

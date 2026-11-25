@@ -122,6 +122,7 @@ const WalkingArtisan = memo(function WalkingArtisan({
         {/* Crisp Lobby-style dark pixel speech/tool bubble */}
         {bubbleText ? (
           <View
+            pointerEvents="none"
             style={{
               position: "absolute",
               bottom: h + 2,
@@ -278,11 +279,11 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
     stations.forEach((item, idx) => {
       const origin = geom.stationOrigin(idx);
       const isResting = item.state === "idle" || item.state === "ready";
-      if (isResting) {
+      if (isResting && loungeIdx < geom.loungeCapacity) {
         const spot = geom.loungeSpot(loungeIdx++);
         map.set(item.id, { x: spot.x * scale, y: spot.y * scale });
       } else {
-        // Seated / standing right in front of the workbench monitor
+        // Seated / standing right in front of the workbench monitor (never overlaps!)
         map.set(item.id, { x: (origin.x + 7) * scale, y: (origin.y + 11) * scale });
       }
     });
@@ -309,6 +310,7 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
     <View style={{ paddingTop: 11, position: "relative" }}>
       {/* Floating Lobby-style white pill room title straddling the top wall */}
       <View
+        pointerEvents="none"
         style={{
           position: "absolute",
           top: 0,
@@ -609,31 +611,33 @@ export const WorkshopCanvas = memo(function WorkshopCanvas({
         padding: compact ? 8 : 14,
       }}
     >
-      <View
-        style={{
-          flexDirection: "row",
-          flexWrap: "wrap",
-          alignItems: "flex-start",
-          gap: compact ? 10 : 12,
-        }}
-      >
-        {rooms.map((room) => (
-          <WorkshopRoomView
-            key={room.workspaceId || "unassigned"}
-            room={room}
-            theme={theme}
-            palette={palette}
-            scale={scale}
-            frame={frame}
-            maxCols={maxCols}
-            selectedId={selectedId}
-            toolByAgent={toolByAgent}
-            envelopes={envelopes}
-            onSelect={onSelect}
-            onSelectArchive={onSelectArchive}
-          />
-        ))}
-      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View
+          style={{
+            flexDirection: compact ? "column" : "row",
+            flexWrap: compact ? "nowrap" : "wrap",
+            alignItems: "flex-start",
+            gap: compact ? 10 : 12,
+          }}
+        >
+          {rooms.map((room) => (
+            <WorkshopRoomView
+              key={room.workspaceId || "unassigned"}
+              room={room}
+              theme={theme}
+              palette={palette}
+              scale={scale}
+              frame={frame}
+              maxCols={maxCols}
+              selectedId={selectedId}
+              toolByAgent={toolByAgent}
+              envelopes={envelopes}
+              onSelect={onSelect}
+              onSelectArchive={onSelectArchive}
+            />
+          ))}
+        </View>
+      </ScrollView>
     </ScrollView>
   );
 });

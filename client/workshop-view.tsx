@@ -153,14 +153,27 @@ export function WorkshopView({
     }
   };
 
+  const scheduleFollowupRefetch = (stillRunning: number) => {
+    if (stillRunning <= 0) return;
+    for (const ms of [1_500, 4_000, 11_000]) {
+      setTimeout(() => {
+        void procQuery.refetch();
+      }, ms);
+    }
+  };
+
   const handleStopProcess = async (row: ProcessRowView) => {
-    await runStopProcess({ pid: row.pid, started: row.started });
+    const res = await runStopProcess({ pid: row.pid, started: row.started });
     await procQuery.refetch();
+    scheduleFollowupRefetch(res.stillRunning);
+    return res;
   };
 
   const handleStopAll = async (agentId: string) => {
-    await runStopAgent({ agentId });
+    const res = await runStopAgent({ agentId });
     await procQuery.refetch();
+    scheduleFollowupRefetch(res.stillRunning);
+    return res;
   };
 
   const handleOptimize = async (row: ProcessRowView) => {
