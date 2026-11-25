@@ -5,8 +5,15 @@ import type { PaseoAgent, PaseoApi } from "./paseo-types";
 
 const MAX_TIMELINE_SUBS = 8;
 const ENVELOPE_TTL_MS = 6_500;
-const CHAT_TAIL_LIMIT = 40;
-const PREVIEW_TAIL_LIMIT = 12;
+const CHAT_TAIL_LIMIT = 120;
+const PREVIEW_TAIL_LIMIT = 40;
+
+const TOOL_STATUS_ZH: Record<string, string> = {
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  canceled: "已取消",
+};
 
 export interface ActiveEnvelope {
   id: string;
@@ -101,13 +108,21 @@ export function parseTimelineItems(
       if (status === "running") {
         toolWord = shortToolWord(name);
       }
-      if (callId.startsWith("paseo-agent-message:")) {
+      if (callId.startsWith("paseo-agent-message:") || raw.agentMessage) {
+        const agentMsg = raw.agentMessage as
+          | { sender?: { id?: string }; text?: string }
+          | undefined;
         const detail = (raw.detail ?? raw.input) as Record<string, unknown> | undefined;
-        const fromId = typeof detail?.fromAgentId === "string" ? detail.fromAgentId : null;
-        const msgText =
-          typeof detail?.text === "string" ? cleanReadableText(detail.text, 120) : "智能体消息";
+        const fromId =
+          (typeof agentMsg?.sender?.id === "string" ? agentMsg.sender.id : null) ??
+          (typeof detail?.fromAgentId === "string" ? detail.fromAgentId : null);
+        const rawMsgText =
+          (typeof agentMsg?.text === "string" ? agentMsg.text : null) ??
+          (typeof detail?.text === "string" ? detail.text : null) ??
+          "智能体消息";
+        const msgText = cleanReadableText(rawMsgText, 120) || "智能体消息";
         if (fromId) {
-          envelopes.push({ id: callId, fromId, toId: agentId, text: msgText, at: now });
+          envelopes.push({ id: callId || id, fromId, toId: agentId, text: msgText, at: now });
           conversation.push({
             id,
             role: "delegation",
@@ -115,10 +130,11 @@ export function parseTimelineItems(
           });
         }
       } else {
+        const zhStatus = status ? (TOOL_STATUS_ZH[status] ?? status) : "";
         tools.push({
           id,
           role: "tool",
-          text: `${shortToolWord(name)}${status ? ` · ${status}` : ""}`,
+          text: `${shortToolWord(name)}${zhStatus ? ` · ${zhStatus}` : ""}`,
         });
       }
     } else if (type === "assistant_message" || type === "user_message") {
@@ -228,8 +244,15 @@ export function useWorkshopFeed(
 
       const unsub = paseo.agents.ref(id).timeline.subscribe((event) => {
         if (!alive) return;
-        const payload = event as unknown as Record<string, unknown>;
-        const item = (payload.item ?? payload.entry ?? payload) as Record<string, unknown> | null;
+        const ev = event as unknown as Record<string, unknown>;
+        const nestedPayload = (ev.payload && typeof ev.payload === "object"
+          ? (ev.payload as Record<string, unknown>)
+          : null);
+        const item = (nestedPayload?.item ??
+          ev.item ??
+          nestedPayload?.entry ??
+          ev.entry ??
+          ev) as Record<string, unknown> | null;
         if (!item || typeof item !== "object") return;
         const parsed = parseTimelineItems(id, [item]);
         if (parsed.toolWord) {

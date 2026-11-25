@@ -456,7 +456,6 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
               }}
             />
             <Text
-              numberOfLines={1}
               style={{
                 color: theme.colors.foreground,
                 fontSize: 12,
@@ -474,11 +473,10 @@ const WorkshopRoomView = memo(function WorkshopRoomView({
           </Text>
         </View>
 
-        {/* Secondary line: Workspace branch/name shown cleanly in its own dedicated slot */}
+        {/* Secondary line: Workspace branch/name shown completely without truncation */}
         {room.workspaceTitle && room.workspaceTitle !== room.projectName ? (
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
             <Text
-              numberOfLines={1}
               style={{ color: theme.colors.foregroundMuted, fontSize: 11, flex: 1 }}
             >
               工作区：{room.workspaceTitle}

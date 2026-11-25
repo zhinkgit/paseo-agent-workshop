@@ -28,7 +28,7 @@ export const WorkshopList = memo(function WorkshopList({
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-          没有匹配的 Agent 或进程
+          没有匹配的智能体或进程
         </Text>
       </View>
     );
@@ -132,7 +132,7 @@ export const WorkshopList = memo(function WorkshopList({
                 }}
               >
                 {item.processCount > 0
-                  ? `${item.processCount}p · ${formatCpu(item.cpu)}`
+                  ? `${item.processCount} 进程 · ${formatCpu(item.cpu)}`
                   : STATE_LABEL[item.state]}
               </Text>
               {item.processCount > 0 ? (

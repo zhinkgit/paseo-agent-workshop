@@ -97,8 +97,11 @@ export function WorkshopView({
     if (typeof remote.invokePluginRpc === "function") {
       return (await remote.invokePluginRpc("agent-workshop", method, input)) as TOut;
     }
-    throw new Error("当前客户端暂不支持在侧栏直连远程主机进程接口，请点击右上角「全图」后切换主机。");
+    throw new Error("远程进程管理请点击右上角「全图」后在顶栏切换主机。");
   };
+
+  const remoteRpcAvailable =
+    isLocalHost || typeof (activePaseo as unknown as RemoteRpcCapable).invokePluginRpc === "function";
 
   const activeScopeId = !isLocalHost || scopeAll ? null : initialWorkspaceId;
 
@@ -111,7 +114,8 @@ export function WorkshopView({
       const payload = activeScopeId ? { workspaceId: activeScopeId } : {};
       return callHostRpc("processes.list", payload, () => localFetchProcesses(payload));
     },
-    refetchInterval: 3_000,
+    enabled: remoteRpcAvailable,
+    refetchInterval: remoteRpcAvailable ? 3_000 : false,
     retry: false,
   });
 
@@ -167,9 +171,27 @@ export function WorkshopView({
     return { rooms: filteredRooms, allItems: filteredItems };
   }, [baseData, stateFilter]);
 
+  const allHostItems = useMemo(
+    () =>
+      buildWorkshopRooms({
+        agents: directory.agents,
+        workspaces: directory.workspaces,
+        processTrees: procQuery.data?.agents ?? [],
+        scopeWorkspaceId: null,
+        query: "",
+        showClosed: true,
+      }).allItems,
+    [directory.agents, directory.workspaces, procQuery.data?.agents],
+  );
+
   const selected = useMemo(
-    () => (selectedId ? baseData.allItems.find((i) => i.id === selectedId) ?? null : null),
-    [baseData.allItems, selectedId],
+    () =>
+      selectedId
+        ? baseData.allItems.find((i) => i.id === selectedId) ??
+          allHostItems.find((i) => i.id === selectedId) ??
+          null
+        : null,
+    [baseData.allItems, allHostItems, selectedId],
   );
 
   const archiveRoom: WorkshopRoom | null = useMemo(
