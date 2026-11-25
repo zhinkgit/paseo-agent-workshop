@@ -1,5 +1,5 @@
-// Clean, airy, Lobby-inspired header & layout on a pure white/host background,
-// with multi-host switcher (useHosts + getPaseoClient), 1-click Full-Screen button, and vertical room layout.
+// All-Chinese sleek Agent Workshop surface with multi-host switcher, 1-click Full-Screen,
+// integrated Big Screen rooms, and refined conversation-first Detail Dock.
 import type { PluginTheme } from "@getpaseo/plugin";
 import { getPaseoClient, useHosts, usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
@@ -23,7 +23,7 @@ import { type WorkshopState } from "./workshop-art";
 import { WorkshopCanvas } from "./workshop-canvas";
 import { WorkshopDock } from "./workshop-dock";
 import { WorkshopList } from "./workshop-list";
-import { buildWorkshopRooms, STATE_ORDER, type WorkshopRoom } from "./workshop-model";
+import { buildWorkshopRooms, STATE_LABEL, STATE_ORDER, type WorkshopRoom } from "./workshop-model";
 
 export interface WorkshopViewProps {
   theme: PluginTheme;
@@ -31,20 +31,9 @@ export interface WorkshopViewProps {
   hostId: string;
   hostLabel: string;
   initialWorkspaceId?: string | null;
-  /** When opened inside an Explorer/Workspace panel, opens the Full-Screen Workshop screen. */
   onOpenFullScreen?: () => void;
-  openAgent?: (agentId: string, serverId?: string) => void;
+  openAgent?: (agentId: string, serverId?: string, workspaceId?: string) => void;
 }
-
-const FILTER_LABEL: Record<WorkshopState, string> = {
-  "needs-input": "Needs you",
-  runaway: "Runaway",
-  failed: "Failed",
-  working: "Working",
-  ready: "Ready",
-  idle: "Idle",
-  closed: "Closed",
-};
 
 type RemoteRpcCapable = {
   invokePluginRpc?: (pluginId: string, method: string, input: unknown) => Promise<unknown>;
@@ -78,12 +67,10 @@ export function WorkshopView({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [archiveRoomId, setArchiveRoomId] = useState<string | null>(null);
 
-  // Follow host prop if the screen-level host picker changes it.
   useEffect(() => {
     setActiveHostId(hostId);
   }, [hostId]);
 
-  // Clear selection when switching hosts.
   useEffect(() => {
     setSelectedId(null);
     setArchiveRoomId(null);
@@ -100,7 +87,6 @@ export function WorkshopView({
     }
   }, [isLocalHost, activeHostId, localPaseo]);
 
-  // Invoke plugin RPC on whichever host is currently selected.
   const callHostRpc = async <TOut,>(
     method: string,
     input: unknown,
@@ -111,10 +97,9 @@ export function WorkshopView({
     if (typeof remote.invokePluginRpc === "function") {
       return (await remote.invokePluginRpc("agent-workshop", method, input)) as TOut;
     }
-    throw new Error("当前客户端暂不支持在面板内直连远程主机进程 RPC，请点击右上角「全图」后在顶栏切换主机。");
+    throw new Error("当前客户端暂不支持在侧栏直连远程主机进程接口，请点击右上角「全图」后切换主机。");
   };
 
-  // Scope to initialWorkspaceId only when viewing the local host with "This workspace" active.
   const activeScopeId = !isLocalHost || scopeAll ? null : initialWorkspaceId;
 
   const directory = useDirectory(activePaseo);
@@ -245,19 +230,27 @@ export function WorkshopView({
     openAgent?.(res.agentId, activeHostId);
   };
 
+  const handleSendMessage = async (agentId: string, text: string) => {
+    await activePaseo.agents.ref(agentId).send(text);
+  };
+
+  const handleArchiveAgent = async (agentId: string) => {
+    await activePaseo.agents.ref(agentId).archive();
+  };
+
   const hostOptions = useMemo(() => {
     if (configuredHosts.length > 0) return configuredHosts;
     return [{ serverId: hostId, label: hostLabel, status: "online" as const }];
   }, [configuredHosts, hostId, hostLabel]);
 
-  const summaryParts = [`${baseData.allItems.length} agents`];
-  if (counts.runaway > 0) summaryParts.push(`${counts.runaway} runaway`);
-  else if (counts["needs-input"] > 0) summaryParts.push(`${counts["needs-input"]} need you`);
-  if (totalProcs > 0) summaryParts.push(`${totalProcs}p · ${formatCpu(totalCpu)} · ${formatMemory(totalRss)}`);
+  const summaryParts = [`${baseData.allItems.length} 个智能体`];
+  if (counts.runaway > 0) summaryParts.push(`${counts.runaway} 失控`);
+  else if (counts["needs-input"] > 0) summaryParts.push(`${counts["needs-input"]} 待审批`);
+  if (totalProcs > 0) summaryParts.push(`${totalProcs} 进程 · ${formatCpu(totalCpu)} · ${formatMemory(totalRss)}`);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
-      {/* Airy pure white/surface0 header */}
+      {/* Clean All-Chinese Header */}
       <View
         style={{
           paddingHorizontal: compact ? 10 : 14,
@@ -269,7 +262,7 @@ export function WorkshopView({
           borderBottomColor: theme.colors.border,
         }}
       >
-        {/* Row 1: Summary on left, Workshop/List + Full-Screen + Refresh on right */}
+        {/* Row 1: Summary + 工坊/列表 + 全图 + 刷新 */}
         <View
           style={{
             flexDirection: "row",
@@ -307,7 +300,7 @@ export function WorkshopView({
                   fontWeight: viewMode === "workshop" ? "600" : "400",
                 }}
               >
-                Workshop
+                工坊
               </Text>
             </Pressable>
             <Pressable
@@ -326,16 +319,15 @@ export function WorkshopView({
                   fontWeight: viewMode === "list" ? "600" : "400",
                 }}
               >
-                List
+                列表
               </Text>
             </Pressable>
 
-            {/* 1-click Full-Screen mode button when opened inside the Explorer panel */}
             {onOpenFullScreen ? (
               <Pressable
                 onPress={onOpenFullScreen}
                 accessibilityRole="button"
-                accessibilityLabel="Open Full-Screen Workshop"
+                accessibilityLabel="打开全图模式"
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -360,7 +352,7 @@ export function WorkshopView({
                 directory.reload();
                 void procQuery.refetch();
               }}
-              accessibilityLabel="Refresh"
+              accessibilityLabel="刷新"
               style={{ padding: 5 }}
             >
               <Icon name="RefreshCw" size={14} color={theme.colors.foregroundMuted} />
@@ -368,7 +360,7 @@ export function WorkshopView({
           </View>
         </View>
 
-        {/* Multi-host switcher bar (shown whenever > 1 host is configured) */}
+        {/* Multi-host switcher bar */}
         {hostOptions.length > 1 ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
             <Icon name="Server" size={12} color={theme.colors.foregroundMuted} />
@@ -381,7 +373,7 @@ export function WorkshopView({
                   disabled={!online}
                   onPress={() => setActiveHostId(h.serverId)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Switch host to ${h.label}`}
+                  accessibilityLabel={`切换主机至 ${h.label}`}
                   style={{
                     flexDirection: "row",
                     alignItems: "center",
@@ -420,7 +412,7 @@ export function WorkshopView({
           </View>
         ) : null}
 
-        {/* Row 2: Clean rounded search input + Zoom icons */}
+        {/* Row 2: Search + Zoom */}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
           <View
             style={{
@@ -439,7 +431,7 @@ export function WorkshopView({
             <TextInput
               value={query}
               onChangeText={setQuery}
-              placeholder="Find an agent, PID, or command"
+              placeholder="搜索智能体、工作区、PID 或命令…"
               placeholderTextColor={theme.colors.foregroundMuted}
               style={{
                 flex: 1,
@@ -449,7 +441,7 @@ export function WorkshopView({
               }}
             />
             {query ? (
-              <Pressable onPress={() => setQuery("")} accessibilityLabel="Clear search">
+              <Pressable onPress={() => setQuery("")} accessibilityLabel="清空搜索">
                 <Icon name="X" size={13} color={theme.colors.foregroundMuted} />
               </Pressable>
             ) : null}
@@ -459,14 +451,14 @@ export function WorkshopView({
             <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
               <Pressable
                 onPress={() => setZoom((z) => Math.max(0.7, Number((z - 0.15).toFixed(2))))}
-                accessibilityLabel="Zoom out"
+                accessibilityLabel="缩小画面"
                 style={{ padding: 6 }}
               >
                 <Icon name="ZoomOut" size={15} color={theme.colors.foregroundMuted} />
               </Pressable>
               <Pressable
                 onPress={() => setZoom((z) => Math.min(1.8, Number((z + 0.15).toFixed(2))))}
-                accessibilityLabel="Zoom in"
+                accessibilityLabel="放大画面"
                 style={{ padding: 6 }}
               >
                 <Icon name="ZoomIn" size={15} color={theme.colors.foregroundMuted} />
@@ -475,7 +467,7 @@ export function WorkshopView({
           ) : null}
         </View>
 
-        {/* Row 3: Scope pills + clean dot filter chips + Auto-clean pill */}
+        {/* Row 3: Scope + State Filters + Auto-clean */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
           {initialWorkspaceId && isLocalHost ? (
             <>
@@ -495,7 +487,7 @@ export function WorkshopView({
                     fontWeight: !scopeAll ? "600" : "400",
                   }}
                 >
-                  This workspace
+                  当前工作区
                 </Text>
               </Pressable>
               <Pressable
@@ -514,7 +506,7 @@ export function WorkshopView({
                     fontWeight: scopeAll ? "600" : "400",
                   }}
                 >
-                  All workspaces
+                  全部工作区
                 </Text>
               </Pressable>
             </>
@@ -536,7 +528,7 @@ export function WorkshopView({
                 fontWeight: stateFilter === "all" ? "600" : "400",
               }}
             >
-              All
+              全部
             </Text>
           </Pressable>
 
@@ -571,7 +563,7 @@ export function WorkshopView({
                     fontWeight: active ? "600" : "400",
                   }}
                 >
-                  {FILTER_LABEL[s]} {counts[s]}
+                  {STATE_LABEL[s]} {counts[s]}
                 </Text>
               </Pressable>
             );
@@ -613,7 +605,7 @@ export function WorkshopView({
         ) : null}
       </View>
 
-      {/* Main split body: Vertical Workshop Canvas / List + Dual-Tab Dock */}
+      {/* Main split body */}
       <View style={{ flex: 1, flexDirection: compact ? "column" : "row" }}>
         <View style={{ flex: 1 }}>
           {viewMode === "workshop" ? (
@@ -621,7 +613,7 @@ export function WorkshopView({
               theme={theme}
               rooms={rooms}
               selectedId={selectedId}
-              onSelect={(id) => {
+              onOpenDetail={(id) => {
                 setArchiveRoomId(null);
                 setSelectedId((prev) => (prev === id ? null : id));
               }}
@@ -629,7 +621,16 @@ export function WorkshopView({
                 setSelectedId(null);
                 setArchiveRoomId(room.workspaceId);
               }}
+              onOpenAgent={
+                openAgent
+                  ? (agentId, wsId) => openAgent(agentId, activeHostId, wsId)
+                  : undefined
+              }
+              onSendMessage={handleSendMessage}
+              onArchiveAgent={handleArchiveAgent}
+              onStopAllProcesses={handleStopAll}
               toolByAgent={feed.toolByAgent}
+              latestByAgent={feed.latestByAgent}
               envelopes={feed.envelopes}
               compact={compact}
               zoom={zoom}
@@ -661,7 +662,9 @@ export function WorkshopView({
             setSelectedId(null);
             setArchiveRoomId(null);
           }}
-          onOpenAgent={openAgent ? (agentId) => openAgent(agentId, activeHostId) : undefined}
+          onOpenAgent={
+            openAgent ? (agentId, wsId) => openAgent(agentId, activeHostId, wsId) : undefined
+          }
           onStopProcess={handleStopProcess}
           onStopAllProcesses={handleStopAll}
           onOptimizeProcess={handleOptimize}

@@ -1,5 +1,5 @@
-// Sleek Paseo-native dual-tab inspector dock with Lucide icons, permission controls,
-// recent chat tail, and full process tree Stop / Optimize actions.
+// Refined Chinese Detail Dock: clean conversation-only Activity stream (tool spam hidden by default
+// with optional toggle), Agent-to-Agent delegation badges, and full Process tree Stop / AI Optimize controls.
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,7 +19,7 @@ export interface WorkshopDockProps {
   archiveRoom: WorkshopRoom | null;
   onSelectAgent: (agentId: string) => void;
   onClose: () => void;
-  onOpenAgent?: (agentId: string) => void;
+  onOpenAgent?: (agentId: string, workspaceId?: string) => void;
   onStopProcess: (row: ProcessRowView) => Promise<StopResult>;
   onStopAllProcesses: (agentId: string) => Promise<StopResult>;
   onOptimizeProcess: (row: ProcessRowView) => Promise<void>;
@@ -56,6 +56,7 @@ export function WorkshopDock({
 }: WorkshopDockProps) {
   const palette = useMemo(() => workshopPalette(theme), [theme]);
   const [tab, setTab] = useState<DockTab>("activity");
+  const [showTools, setShowTools] = useState(false);
   const [draft, setDraft] = useState("");
   const [showComposer, setShowComposer] = useState(false);
   const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -65,17 +66,17 @@ export function WorkshopDock({
   const selectedIdRef = useRef<string | null>(selected?.id ?? null);
   selectedIdRef.current = selected?.id ?? null;
 
-  // Bind draft, composer visibility, and notice strictly to the active selected agent.
   useEffect(() => {
     setDraft("");
     setShowComposer(false);
     setNotice(null);
+    setShowTools(false);
   }, [selected?.id]);
 
   const activeTab: DockTab =
     selected?.state === "runaway" && !selected.agent ? "processes" : tab;
 
-  const { items: chatItems, loading: chatLoading } = useSelectedChat(
+  const { conversation, tools, loading: chatLoading } = useSelectedChat(
     paseo,
     selected?.agent ? selected.id : null,
     chatRefresh,
@@ -116,7 +117,7 @@ export function WorkshopDock({
       <View
         style={{
           flex: compact ? 0.95 : undefined,
-          width: compact ? undefined : 340,
+          width: compact ? undefined : 350,
           borderTopWidth: compact ? 1 : 0,
           borderLeftWidth: compact ? 0 : 1,
           borderColor: theme.colors.border,
@@ -138,10 +139,10 @@ export function WorkshopDock({
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Icon name="Archive" size={14} color={theme.colors.foregroundMuted} />
             <Text style={{ color: theme.colors.foreground, fontSize: 12, fontWeight: "700" }}>
-              {archiveRoom.name} · 档案箱 ({archiveRoom.archived.length})
+              {archiveRoom.projectName} · 档案箱（{archiveRoom.archived.length}）
             </Text>
           </View>
-          <Pressable onPress={onClose} accessibilityLabel="Close">
+          <Pressable onPress={onClose} accessibilityLabel="关闭档案箱">
             <Icon name="X" size={15} color={theme.colors.foregroundMuted} />
           </Pressable>
         </View>
@@ -192,7 +193,7 @@ export function WorkshopDock({
     <View
       style={{
         flex: compact ? 1.05 : undefined,
-        width: compact ? undefined : 360,
+        width: compact ? undefined : 380,
         borderTopWidth: compact ? 1 : 0,
         borderLeftWidth: compact ? 0 : 1,
         borderColor: theme.colors.border,
@@ -202,49 +203,51 @@ export function WorkshopDock({
       {/* Unified header */}
       <View
         style={{
-          padding: 10,
+          padding: 12,
           gap: 8,
           borderBottomWidth: 1,
           borderBottomColor: theme.colors.border,
           backgroundColor: theme.colors.surface1,
         }}
       >
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-            <PixelSprite
-              bitmap={STATE_ICONS[selected.state]}
-              colors={palette.colors}
-              paletteKey={palette.key}
-              scale={2}
-            />
-            <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, flex: 1, minWidth: 0 }}>
+            <View style={{ marginTop: 2 }}>
+              <PixelSprite
+                bitmap={STATE_ICONS[selected.state]}
+                colors={palette.colors}
+                paletteKey={palette.key}
+                scale={2}
+              />
+            </View>
+            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
               <Text
-                numberOfLines={1}
-                style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: "700" }}
+                numberOfLines={2}
+                style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: "700", lineHeight: 18 }}
               >
                 {selected.title}
               </Text>
               <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
-                {STATE_LABEL[selected.state]} · {selected.processCount}p · {formatCpu(selected.cpu)} ·{" "}
-                {formatMemory(selected.rssKb)}
+                {selected.projectName} · {STATE_LABEL[selected.state]} · {selected.processCount} 进程 ·{" "}
+                {formatCpu(selected.cpu)} · {formatMemory(selected.rssKb)}
               </Text>
             </View>
           </View>
-          <Pressable onPress={onClose} accessibilityLabel="Close dock" style={{ padding: 2 }}>
+          <Pressable onPress={onClose} accessibilityLabel="关闭详情栏" style={{ padding: 2 }}>
             <Icon name="X" size={15} color={theme.colors.foregroundMuted} />
           </Pressable>
         </View>
 
-        {/* Sleek icon action bar */}
+        {/* Action bar */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {selected.agent && onOpenAgent ? (
             <Pressable
-              onPress={() => onOpenAgent(selected.id)}
+              onPress={() => onOpenAgent(selected.id, selected.workspaceId)}
               style={{
                 flexDirection: "row",
                 alignItems: "center",
                 gap: 4,
-                paddingHorizontal: 8,
+                paddingHorizontal: 9,
                 paddingVertical: 4,
                 borderRadius: 6,
                 backgroundColor: theme.colors.accent,
@@ -252,7 +255,7 @@ export function WorkshopDock({
             >
               <Icon name="ExternalLink" size={12} color={theme.colors.accentForeground} />
               <Text style={{ color: theme.colors.accentForeground, fontSize: 11, fontWeight: "600" }}>
-                打开
+                打开会话
               </Text>
             </Pressable>
           ) : null}
@@ -324,7 +327,7 @@ export function WorkshopDock({
                   fontWeight: "600",
                 }}
               >
-                {isBusy(`stop-all-${selected.id}`) ? "停止中…" : `全停 (${selected.processCount})`}
+                {isBusy(`stop-all-${selected.id}`) ? "停止中…" : `停止全部 (${selected.processCount})`}
               </Text>
             </Pressable>
           ) : null}
@@ -335,7 +338,7 @@ export function WorkshopDock({
             <TextInput
               value={draft}
               onChangeText={setDraft}
-              placeholder="给该 Agent 发送消息…"
+              placeholder="给该智能体发送消息…"
               placeholderTextColor={theme.colors.foregroundMuted}
               style={{
                 flex: 1,
@@ -426,7 +429,7 @@ export function WorkshopDock({
               fontWeight: activeTab === "activity" ? "700" : "500",
             }}
           >
-            动态{pendingPermissions.length > 0 ? ` (${pendingPermissions.length})` : ""}
+            对话动态{pendingPermissions.length > 0 ? ` (${pendingPermissions.length})` : ""}
           </Text>
         </Pressable>
         <Pressable
@@ -455,21 +458,63 @@ export function WorkshopDock({
               fontWeight: activeTab === "processes" ? "700" : "500",
             }}
           >
-            进程 ({selected.processCount})
+            进程资源 ({selected.processCount})
           </Text>
         </Pressable>
       </View>
 
       {/* Tab Body */}
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 10, gap: 8 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 12, gap: 10 }}>
         {activeTab === "activity" ? (
           <>
+            {/* Delegation links (if this agent called other agents) */}
+            {selected.callingTargets.length > 0 ? (
+              <View
+                style={{
+                  padding: 9,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surface1,
+                  gap: 5,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                  <Icon name="GitBranch" size={12} color={theme.colors.accent} />
+                  <Text style={{ color: theme.colors.foreground, fontSize: 11, fontWeight: "700" }}>
+                    已调用其他智能体（{selected.callingTargets.length}）
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {selected.callingTargets.map((child) => (
+                    <Pressable
+                      key={child.id}
+                      onPress={() => onSelectAgent(child.id)}
+                      style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        borderColor: theme.colors.border,
+                        backgroundColor: theme.colors.surface0,
+                      }}
+                    >
+                      <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>
+                        ⟶ {child.title}（{STATE_LABEL[child.state]}）
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            {/* Pending permissions */}
             {pendingPermissions.map((perm) => (
               <View
                 key={perm.id}
                 style={{
-                  padding: 9,
-                  borderRadius: 7,
+                  padding: 10,
+                  borderRadius: 8,
                   borderWidth: 1,
                   borderColor: theme.colors.statusWarning,
                   backgroundColor: theme.colors.surface1,
@@ -477,7 +522,7 @@ export function WorkshopDock({
                 }}
               >
                 <Text style={{ color: theme.colors.foreground, fontSize: 12, fontWeight: "700" }}>
-                  待审批：{perm.name}
+                  待审批权限：{perm.name}
                 </Text>
                 {perm.title ? (
                   <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
@@ -504,7 +549,7 @@ export function WorkshopDock({
                       backgroundColor: theme.colors.statusSuccess,
                     }}
                   >
-                    <Text style={{ color: "#ffffff", fontSize: 11, fontWeight: "700" }}>Allow</Text>
+                    <Text style={{ color: "#ffffff", fontSize: 11, fontWeight: "700" }}>允许</Text>
                   </Pressable>
                   <Pressable
                     disabled={isBusy(`perm-${perm.id}`)}
@@ -513,7 +558,7 @@ export function WorkshopDock({
                       void runAction(`perm-${perm.id}`, targetId, async () => {
                         await paseo.agents.ref(targetId).respondToPermission({
                           requestId: perm.id,
-                          response: { behavior: "deny", message: "Denied from Agent Workshop" },
+                          response: { behavior: "deny", message: "已在智能体工坊中拒绝" },
                         });
                         return { text: "已拒绝" };
                       });
@@ -525,11 +570,11 @@ export function WorkshopDock({
                       backgroundColor: theme.colors.statusDanger,
                     }}
                   >
-                    <Text style={{ color: "#ffffff", fontSize: 11, fontWeight: "700" }}>Deny</Text>
+                    <Text style={{ color: "#ffffff", fontSize: 11, fontWeight: "700" }}>拒绝</Text>
                   </Pressable>
                   {onOpenAgent ? (
                     <Pressable
-                      onPress={() => onOpenAgent(selected.id)}
+                      onPress={() => onOpenAgent(selected.id, selected.workspaceId)}
                       style={{
                         paddingHorizontal: 10,
                         paddingVertical: 4,
@@ -538,65 +583,118 @@ export function WorkshopDock({
                         borderColor: theme.colors.border,
                       }}
                     >
-                      <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>Review</Text>
+                      <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>查看详情</Text>
                     </Pressable>
                   ) : null}
                 </View>
               </View>
             ))}
 
+            {/* Clean Chat Bubbles (User & Assistant only by default; tool calls hidden) */}
             {!selected.agent ? (
               <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-                该 Agent 已结束或已归档，请切换到「进程」查看并处理残留进程。
+                该智能体已结束或已归档，请切换到「进程资源」处理残留进程。
               </Text>
-            ) : chatLoading && chatItems.length === 0 ? (
+            ) : chatLoading && conversation.length === 0 ? (
               <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-                加载近期动态中…
+                加载近期对话中…
               </Text>
-            ) : chatItems.length === 0 ? (
+            ) : conversation.length === 0 ? (
               <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-                暂无近期对话记录。
+                暂无近期对话消息。
               </Text>
             ) : (
-              chatItems.map((entry) => (
-                <View
-                  key={entry.id}
-                  style={{
-                    paddingHorizontal: 9,
-                    paddingVertical: 6,
-                    borderRadius: 6,
-                    backgroundColor:
-                      entry.role === "user" ? theme.colors.surface2 : theme.colors.surface1,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border,
-                    gap: 2,
-                  }}
-                >
-                  <Text
+              conversation.map((entry) => {
+                const isUser = entry.role === "user";
+                const isErr = entry.role === "system";
+                const isDel = entry.role === "delegation";
+                return (
+                  <View
+                    key={entry.id}
                     style={{
-                      color: theme.colors.foregroundMuted,
-                      fontSize: 10,
-                      fontWeight: "700",
+                      alignSelf: isUser ? "flex-end" : "stretch",
+                      maxWidth: isUser ? "88%" : "100%",
+                      paddingHorizontal: 10,
+                      paddingVertical: 8,
+                      borderRadius: 9,
+                      backgroundColor: isUser
+                        ? theme.colors.accent
+                        : isErr
+                          ? theme.colors.surface1
+                          : theme.colors.surface1,
+                      borderWidth: isUser ? 0 : 1,
+                      borderColor: isErr
+                        ? theme.colors.statusDanger
+                        : isDel
+                          ? theme.colors.accent
+                          : theme.colors.border,
+                      gap: 3,
                     }}
                   >
-                    {entry.role === "user"
-                      ? "你"
-                      : entry.role === "assistant"
-                        ? "Agent"
-                        : entry.role === "tool"
-                          ? "工具"
-                          : "系统"}
-                  </Text>
-                  <Text style={{ color: theme.colors.foreground, fontSize: 12 }}>{entry.text}</Text>
-                </View>
-              ))
+                    <Text
+                      style={{
+                        color: isUser
+                          ? theme.colors.accentForeground
+                          : isErr
+                            ? theme.colors.statusDanger
+                            : theme.colors.foregroundMuted,
+                        fontSize: 10,
+                        fontWeight: "700",
+                        opacity: isUser ? 0.85 : 1,
+                      }}
+                    >
+                      {isUser ? "我" : isDel ? "智能体协作" : isErr ? "系统异常" : "智能体"}
+                    </Text>
+                    <Text
+                      style={{
+                        color: isUser ? theme.colors.accentForeground : theme.colors.foreground,
+                        fontSize: 12,
+                        lineHeight: 18,
+                      }}
+                    >
+                      {entry.text}
+                    </Text>
+                  </View>
+                );
+              })
             )}
+
+            {/* Quiet opt-in toggle for tool call history (OFF by default) */}
+            {tools.length > 0 ? (
+              <View style={{ marginTop: 4, gap: 6 }}>
+                <Pressable
+                  onPress={() => setShowTools((v) => !v)}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 4, alignSelf: "flex-start" }}
+                >
+                  <Icon
+                    name={showTools ? "ChevronDown" : "ChevronRight"}
+                    size={12}
+                    color={theme.colors.foregroundMuted}
+                  />
+                  <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+                    {showTools ? "隐藏工具调用记录" : `查看近期工具调用（${tools.length} 条）`}
+                  </Text>
+                </Pressable>
+                {showTools ? (
+                  <View style={{ gap: 4 }}>
+                    {tools.map((t) => (
+                      <Text
+                        key={t.id}
+                        style={{ color: theme.colors.foregroundMuted, fontSize: 11, paddingLeft: 12 }}
+                      >
+                        • {t.text}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </>
         ) : (
           <>
             {selected.rows.length === 0 ? (
               <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
-                当前没有检测到归属该 Agent 的活跃操作系统进程。
+                当前没有检测到归属该智能体的活跃操作系统进程。
               </Text>
             ) : (
               selected.rows.map((row) => {
@@ -607,7 +705,7 @@ export function WorkshopDock({
                     key={`${row.pid}@${row.started}`}
                     style={{
                       marginLeft: indent,
-                      padding: 8,
+                      padding: 9,
                       borderRadius: 7,
                       borderWidth: 1,
                       borderColor: row.detached ? theme.colors.statusWarning : theme.colors.border,
@@ -668,14 +766,14 @@ export function WorkshopDock({
                               const targetId = selected.id;
                               void runAction(`opt-${row.pid}@${row.started}`, targetId, async () => {
                                 await onOptimizeProcess(row);
-                                return { text: "已派发优化 Agent" };
+                                return { text: "已派发优化智能体" };
                               });
                             }}
                             style={actionBtn}
                           >
                             <Icon name="Sparkles" size={11} color={theme.colors.accent} />
                             <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>
-                              {isBusy(`opt-${row.pid}@${row.started}`) ? "派发中…" : "Optimize"}
+                              {isBusy(`opt-${row.pid}@${row.started}`) ? "派发中…" : "AI 优化"}
                             </Text>
                           </Pressable>
                         ) : null}
@@ -703,7 +801,7 @@ export function WorkshopDock({
                         >
                           <Icon name="Square" size={10} color="#ffffff" />
                           <Text style={{ color: "#ffffff", fontSize: 11, fontWeight: "600" }}>
-                            {isBusy(`stop-${row.pid}@${row.started}`) ? "停止中…" : "Stop"}
+                            {isBusy(`stop-${row.pid}@${row.started}`) ? "停止中…" : "停止"}
                           </Text>
                         </Pressable>
                       </View>

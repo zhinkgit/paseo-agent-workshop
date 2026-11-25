@@ -25,7 +25,7 @@ export function contributeHeaderButtons(client: PluginClientContext): () => void
           id: WORKSHOP_PANEL_ID,
           workspaceId,
           button: {
-            title: "Open Agent Workshop in Explorer",
+            title: "在侧边栏打开智能体工坊",
             icon: "Hammer",
             behavior: {
               kind: "action",

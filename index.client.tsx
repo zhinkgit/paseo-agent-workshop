@@ -18,12 +18,23 @@ export default function contribute(client: PluginClientContext) {
         onOpenFullScreen={() => client.openScreen({ screenId: WORKSHOP_PANEL_ID })}
         openAgent={
           navigation
-            ? (agentId, serverId) =>
+            ? (agentId, serverId, targetWorkspaceId) => {
+                const isRemote = Boolean(serverId && serverId !== host.id);
                 navigation.openAgent({
                   agentId,
                   serverId: serverId ?? host.id,
-                  focusHost: Boolean(serverId && serverId !== host.id),
-                })
+                  ...(isRemote ? { focusHost: true } : {}),
+                });
+                // Keep the Workshop Explorer panel open when switching to an agent tab on this host.
+                if (!isRemote) {
+                  setTimeout(() => {
+                    client.openPanel(WORKSHOP_PANEL_ID, {
+                      workspaceId: targetWorkspaceId || workspaceId,
+                      location: "explorer",
+                    });
+                  }, 120);
+                }
+              }
             : undefined
         }
       />
@@ -40,12 +51,14 @@ export default function contribute(client: PluginClientContext) {
         initialWorkspaceId={null}
         openAgent={
           navigation
-            ? (agentId, serverId) =>
+            ? (agentId, serverId) => {
+                const isRemote = Boolean(serverId && serverId !== host.id);
                 navigation.openAgent({
                   agentId,
                   serverId: serverId ?? host.id,
-                  focusHost: Boolean(serverId && serverId !== host.id),
-                })
+                  ...(isRemote ? { focusHost: true } : {}),
+                });
+              }
             : undefined
         }
       />
@@ -55,7 +68,7 @@ export default function contribute(client: PluginClientContext) {
   const disposers = [
     client.addWorkspacePanel({
       id: WORKSHOP_PANEL_ID,
-      title: "Workshop",
+      title: "智能体工坊",
       icon: "Hammer",
       context: "workspace",
       locations: ["explorer", "workspace"],
@@ -63,14 +76,14 @@ export default function contribute(client: PluginClientContext) {
     }),
     client.addScreen({
       id: WORKSHOP_PANEL_ID,
-      title: "Agent Workshop",
+      title: "智能体工坊",
       Component: WorkshopScreen,
     }),
     client.addCommandCenterItem({
       id: "open-workshop-workspace",
-      title: "Open Agent Workshop",
+      title: "打开智能体工坊",
       icon: "Hammer",
-      keywords: ["workshop", "lobby", "processes", "agents", "cpu", "memory", "pixel"],
+      keywords: ["工坊", "智能体", "进程", "workshop", "lobby", "processes", "agents"],
       context: "workspace",
       onSelect({ openPanel }) {
         openPanel(WORKSHOP_PANEL_ID, { location: "explorer" });
@@ -78,9 +91,9 @@ export default function contribute(client: PluginClientContext) {
     }),
     client.addCommandCenterItem({
       id: "open-workshop-all",
-      title: "Open Agent Workshop (Full Screen)",
+      title: "打开智能体工坊（全图模式）",
       icon: "Hammer",
-      keywords: ["workshop", "lobby", "processes", "agents", "orphan", "kill", "fullscreen"],
+      keywords: ["工坊", "全图", "智能体", "进程", "workshop", "fullscreen"],
       context: "global",
       onSelect({ openScreen }) {
         openScreen({ screenId: WORKSHOP_PANEL_ID });
